@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>Nivrit.Sdk</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Nivrit Contributors</Authors>
+    <Description>Nivrit secrets SDK for .NET</Description>
+    <RepositoryUrl>https://github.com/infiniolabs/nivrit</RepositoryUrl>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <!-- Platform helper binaries dropped in by build-resources.sh and embedded as
+       resources named Nivrit.native.<rid>.<file>, extracted at runtime by
+       HelperCrypto. A single package carries every platform. -->
+  <ItemGroup>
+    <EmbeddedResource Include="native/**/*">
+      <LogicalName>Nivrit.native.$([System.String]::Copy('%(RecursiveDir)').Replace('\','/').TrimEnd('/').Replace('/','.')).%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

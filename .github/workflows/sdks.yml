@@ -1,0 +1,381 @@
+name: SDKs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdks/**'
+      - 'crates/nivrit-crypto-helper/**'
+      - '.github/workflows/sdks.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sdks/**'
+      - 'crates/nivrit-crypto-helper/**'
+      - '.github/workflows/sdks.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+  NIVRIT_API_URL: http://localhost:4000
+
+jobs:
+  build-helper:
+    name: Build crypto helper (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset: nivrit-crypto-helper-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset: nivrit-crypto-helper-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            asset: nivrit-crypto-helper-darwin-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            asset: nivrit-crypto-helper-darwin-aarch64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset: nivrit-crypto-helper-windows-x86_64.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nivrit-crypto-helper-${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build helper
+        run: cargo build --release -p nivrit-crypto-helper --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: target/${{ matrix.target }}/release/nivrit-crypto-helper*
+          if-no-files-found: error
+
+  smoke-tests:
+    name: Smoke tests (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    needs: build-helper
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [node, python, go, rust]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: nivrit
+          POSTGRES_PASSWORD: nivrit
+          POSTGRES_DB: nivrit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nivrit-api
+
+      - name: Download helper
+        uses: actions/download-artifact@v4
+        with:
+          name: nivrit-crypto-helper-linux-x86_64
+          path: target/release
+
+      - name: Make helper executable
+        run: chmod +x target/release/nivrit-crypto-helper
+
+      - name: Start API
+        run: |
+          export DATABASE_URL=postgres://nivrit:nivrit@localhost:5432/nivrit
+          cd crates/nivrit-api
+          cargo run --release &
+          for i in {1..30}; do
+            curl -s http://localhost:4000/health && break
+            sleep 1
+          done
+
+      - name: Setup Bun
+        if: matrix.sdk == 'node'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Setup Python
+        if: matrix.sdk == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Go
+        if: matrix.sdk == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Run Node smoke test
+        if: matrix.sdk == 'node'
+        run: |
+          cd sdks/node
+          bun test test/smoke.js
+
+      - name: Run Python smoke test
+        if: matrix.sdk == 'python'
+        run: |
+          cd sdks/python
+          PYTHONPATH=. python3 tests/test_smoke.py
+
+      - name: Run Go smoke test
+        if: matrix.sdk == 'go'
+        run: |
+          cd sdks/go/nivrit
+          go test -v -run TestSmoke ./...
+
+      - name: Run Rust smoke test
+        if: matrix.sdk == 'rust'
+        run: cargo test -p nivrit-sdk --test smoke -- --nocapture
+
+  # Hermetic crypto round-trips for the SDKs the smoke matrix doesn't cover.
+  # No API/DB: each test drives its wrapper against the helper binary directly,
+  # which is exactly the surface where wrapper bugs hide (e.g. the Elixir stdin
+  # bug). Faster than the e2e smoke job and isolates the crypto contract.
+  crypto-parity:
+    name: SDK crypto parity (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    needs: build-helper
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [ruby, dotnet, java, elixir]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download helper
+        uses: actions/download-artifact@v4
+        with:
+          name: nivrit-crypto-helper-linux-x86_64
+          path: target/release
+
+      - name: Make helper executable and export path
+        run: |
+          chmod +x target/release/nivrit-crypto-helper
+          echo "NIVRIT_CRYPTO_HELPER=$GITHUB_WORKSPACE/target/release/nivrit-crypto-helper" >> "$GITHUB_ENV"
+
+      - name: Setup .NET
+        if: matrix.sdk == 'dotnet'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0'
+
+      - name: Setup Java
+        if: matrix.sdk == 'java'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Elixir
+        if: matrix.sdk == 'elixir'
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27'
+          elixir-version: '1.17'
+
+      - name: Ruby crypto test
+        if: matrix.sdk == 'ruby'
+        working-directory: sdks/ruby
+        run: ruby -Ilib test/crypto_test.rb
+
+      - name: .NET crypto test
+        if: matrix.sdk == 'dotnet'
+        working-directory: sdks/dotnet/Nivrit.Tests
+        run: dotnet test
+
+      - name: Java crypto test
+        if: matrix.sdk == 'java'
+        working-directory: sdks/java
+        run: mvn -q -B test
+
+      - name: Elixir crypto test
+        if: matrix.sdk == 'elixir'
+        working-directory: sdks/elixir
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+          mix test test/crypto_test.exs
+
+  # Regression for PACKAGED resolution: builds each SDK's distributable with the
+  # helper bundled, then runs a crypto round-trip with NIVRIT_CRYPTO_HELPER UNSET
+  # and no cargo build present — so only the embedded/bundled binary can satisfy
+  # it. This is the path real registry installs take; the jobs above all inject
+  # the helper via env/dev path and never exercise it.
+  packaged-install:
+    name: Packaged install (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    needs: build-helper
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [node, python, go, ruby, java, dotnet, elixir]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all helper binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten helper binaries into helpers/
+        run: |
+          mkdir -p helpers
+          for d in artifacts/nivrit-crypto-helper-*; do
+            name=$(basename "$d")
+            cp "$(find "$d" -type f | head -1)" "helpers/$name"
+          done
+          ls -la helpers
+
+      - name: Setup Node
+        if: matrix.sdk == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Python
+        if: matrix.sdk == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Go
+        if: matrix.sdk == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Setup Ruby
+        if: matrix.sdk == 'ruby'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Setup Java
+        if: matrix.sdk == 'java'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup .NET
+        if: matrix.sdk == 'dotnet'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0'
+
+      - name: Setup Elixir
+        if: matrix.sdk == 'elixir'
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27'
+          elixir-version: '1.17'
+
+      - name: Node packaged install
+        if: matrix.sdk == 'node'
+        working-directory: sdks/node
+        run: |
+          cp -r ../../helpers .
+          bash scripts/build-platform-packages.sh
+          sdk_tgz="$PWD/$(bun pack --silent | tail -1)"
+          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pack --silent | tail -1)"
+          proj=$(mktemp -d)
+          cp test/packaged.js "$proj/packaged.js"
+          cd "$proj"
+          bun init -y >/dev/null
+          bun install --silent "$sdk_tgz" "$helper_tgz"
+          env -u NIVRIT_CRYPTO_HELPER bun run packaged.js
+
+      - name: Python packaged install
+        if: matrix.sdk == 'python'
+        working-directory: sdks/python
+        run: |
+          cp -r ../../helpers .
+          python -m pip install -U pip build wheel setuptools
+          PYTHON=python bash build-wheels.sh
+          python -m pip install dist/nivrit_sdk-0.1.0-py3-none-manylinux2014_x86_64.whl
+          cd /tmp
+          env -u NIVRIT_CRYPTO_HELPER python "$GITHUB_WORKSPACE/sdks/python/tests/test_packaged.py"
+
+      - name: Go embedded build
+        if: matrix.sdk == 'go'
+        working-directory: sdks/go/nivrit
+        run: |
+          cp -r ../../../helpers .
+          bash scripts/embed-helpers.sh
+          env -u NIVRIT_CRYPTO_HELPER go test -v -run TestBundledHelper ./...
+
+      - name: Ruby fat gem
+        if: matrix.sdk == 'ruby'
+        working-directory: sdks/ruby
+        run: |
+          cp -r ../../helpers .
+          bash build-gems.sh
+          # bundled-resolution test: binary in vendor/, env unset, no dev build
+          mkdir -p vendor
+          cp helpers/nivrit-crypto-helper-linux-x86_64 vendor/nivrit-crypto-helper
+          chmod +x vendor/nivrit-crypto-helper
+          env -u NIVRIT_CRYPTO_HELPER ruby -Ilib test/crypto_test.rb
+
+      - name: Java JAR resources
+        if: matrix.sdk == 'java'
+        working-directory: sdks/java
+        run: |
+          cp -r ../../helpers .
+          bash build-resources.sh
+          env -u NIVRIT_CRYPTO_HELPER mvn -q -B test
+
+      - name: .NET embedded resources
+        if: matrix.sdk == 'dotnet'
+        working-directory: sdks/dotnet/Nivrit
+        run: |
+          cp -r ../../../helpers .
+          bash build-resources.sh
+          cd ../Nivrit.Tests
+          env -u NIVRIT_CRYPTO_HELPER dotnet test
+
+      - name: Elixir priv bundle
+        if: matrix.sdk == 'elixir'
+        working-directory: sdks/elixir
+        run: |
+          cp -r ../../helpers .
+          bash build-priv.sh
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+          env -u NIVRIT_CRYPTO_HELPER mix test test/crypto_test.exs

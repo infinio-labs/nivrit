@@ -1,0 +1,316 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            p.id as pat_id, p.user_id as pat_user_id, p.name as pat_name,\n            p.token_hash as pat_token_hash, p.last_used_at as pat_last_used_at,\n            p.expires_at as pat_expires_at, p.revoked_at as pat_revoked_at,\n            p.created_at as pat_created_at,\n            u.id as user_id, u.email as user_email, u.name as user_name,\n            u.password_hash as user_password_hash, u.public_key as user_public_key,\n            u.encrypted_private_key as user_encrypted_private_key,\n            u.private_key_nonce as user_private_key_nonce,\n            u.private_key_algorithm as user_private_key_algorithm,\n            u.recovery_code_hash as user_recovery_code_hash,\n            u.encrypted_private_key_recovery as user_encrypted_private_key_recovery,\n            u.private_key_recovery_nonce as user_private_key_recovery_nonce,\n            u.private_key_recovery_algorithm as user_private_key_recovery_algorithm,\n            u.totp_secret_encrypted as user_totp_secret_encrypted,\n            u.totp_enabled as user_totp_enabled, u.totp_verified as user_totp_verified,\n            u.created_at as user_created_at, u.updated_at as user_updated_at\n        FROM personal_access_tokens p\n        JOIN users u ON u.id = p.user_id\n        WHERE p.token_hash = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pat_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "pat_user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "pat_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "pat_token_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "token_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "pat_last_used_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "last_used_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "pat_expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "pat_revoked_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "revoked_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "pat_created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "personal_access_tokens",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "user_email",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "user_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "user_password_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "password_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "user_public_key",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "public_key"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "user_encrypted_private_key",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "encrypted_private_key"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "user_private_key_nonce",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "private_key_nonce"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "user_private_key_algorithm",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "private_key_algorithm"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "user_recovery_code_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "recovery_code_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "user_encrypted_private_key_recovery",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "encrypted_private_key_recovery"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "user_private_key_recovery_nonce",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "private_key_recovery_nonce"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "user_private_key_recovery_algorithm",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "private_key_recovery_algorithm"
+          }
+        }
+      },
+      {
+        "ordinal": 20,
+        "name": "user_totp_secret_encrypted",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "totp_secret_encrypted"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "user_totp_enabled",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "totp_enabled"
+          }
+        }
+      },
+      {
+        "ordinal": 22,
+        "name": "user_totp_verified",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "totp_verified"
+          }
+        }
+      },
+      {
+        "ordinal": 23,
+        "name": "user_created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 24,
+        "name": "user_updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "639dd583ae38c995ecdc1c7a8e29d0bdf431876ba5e3304a79975106fe57b4cf"
+}

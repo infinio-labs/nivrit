@@ -1,0 +1,152 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH target AS (\n            SELECT s.id AS secret_id, sv.encrypted_value, sv.nonce, sv.algorithm\n            FROM secrets s\n            JOIN secret_versions sv ON sv.secret_id = s.id AND sv.version = $5\n            WHERE s.project_id = $1 AND s.environment_id = $2\n              AND s.folder_id IS NOT DISTINCT FROM $3 AND s.key = $4\n        ),\n        upserted AS (\n            UPDATE secrets\n            SET encrypted_value = target.encrypted_value,\n                nonce = target.nonce,\n                algorithm = target.algorithm,\n                version = secrets.version + 1,\n                updated_at = NOW()\n            FROM target\n            WHERE secrets.id = target.secret_id\n            RETURNING secrets.id, secrets.project_id, secrets.environment_id, secrets.folder_id,\n                      secrets.key, secrets.encrypted_value, secrets.nonce, secrets.algorithm,\n                      secrets.version, secrets.created_at, secrets.updated_at\n        ),\n        versioned AS (\n            INSERT INTO secret_versions (secret_id, encrypted_value, nonce, version, algorithm)\n            SELECT id, encrypted_value, nonce, version, algorithm FROM upserted\n        )\n        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, created_at, updated_at\n        FROM upserted\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "project_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "environment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "environment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "folder_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "folder_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "encrypted_value",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "encrypted_value"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "nonce",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "nonce"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "algorithm",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "algorithm"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "951cd46d8af07717c36ce01c7b026d46f66ca48b689e99b7f93837888fcb323e"
+}

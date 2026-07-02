@@ -1,0 +1,63 @@
+# Rust
+/target
+**/target
+**/*.rs.bk
+# Cargo.lock IS committed: this is an application workspace (reproducible builds, cargo audit).
+
+# Generated knowledge graph (graphify)
+graphify-out/
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.docker
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQLx offline query data IS committed so builds/CI compile without a live DB (SQLX_OFFLINE).
+
+# Node / web
+node_modules
+dist
+build
+*.log
+
+# Test data
+*.db
+*.sqlite
+*.sqlite3
+
+# Local TLS certificates
+certs/
+
+# Playwright
+crates/nivrit-web/e2e/.state/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# SDK artifacts
+sdks/dist/
+sdks/python/.venv/
+sdks/python/**/*.egg-info/
+sdks/python/build/
+sdks/node/*.tgz
+sdks/dotnet/**/bin/
+sdks/dotnet/**/obj/
+sdks/java/target/
+sdks/ruby/*.gem
+sdks/elixir/_build/
+sdks/elixir/deps/
+sdks/elixir/.fetch
+sdks/go/**/*.exe
+

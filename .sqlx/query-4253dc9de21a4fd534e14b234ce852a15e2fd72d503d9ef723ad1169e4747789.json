@@ -1,0 +1,101 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT user_id, project_id, role, encrypted_project_key, project_key_nonce, project_key_algorithm, created_at\n        FROM project_memberships\n        WHERE project_id = $1 AND user_id = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "project_memberships",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "project_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "project_memberships",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "project_memberships",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "encrypted_project_key",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "project_memberships",
+            "name": "encrypted_project_key"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "project_key_nonce",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "project_memberships",
+            "name": "project_key_nonce"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "project_key_algorithm",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "project_memberships",
+            "name": "project_key_algorithm"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "project_memberships",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4253dc9de21a4fd534e14b234ce852a15e2fd72d503d9ef723ad1169e4747789"
+}

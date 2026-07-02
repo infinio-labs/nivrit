@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE project_memberships\n        SET encrypted_project_key = $1,\n            project_key_nonce = $2,\n            project_key_algorithm = $3\n        WHERE project_id = $4 AND user_id = $5\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Text",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aa0bf764745688f088aa46e4f9c16698ff8eae9a255f01dedb203360ef76d50a"
+}

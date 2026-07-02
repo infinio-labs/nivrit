@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nivrit-sdk"
+version = "0.1.0"
+description = "Nivrit secrets SDK for Python"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-only"
+
+[project.urls]
+Repository = "https://github.com/infiniolabs/nivrit"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nivrit*"]
+
+[tool.setuptools.package-data]
+nivrit = ["bin/*"]

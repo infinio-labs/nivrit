@@ -1,0 +1,3 @@
+Per-platform nivrit-crypto-helper binaries land here at release time
+(scripts/embed-helpers.sh). This .keep file makes //go:embed compile in the
+dev tree, where no binaries are present.

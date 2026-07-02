@@ -1,0 +1,137 @@
+{
+  "name": "nivrit-vscode",
+  "displayName": "Nivrit",
+  "description": "Browse and copy secrets from Nivrit inside VS Code",
+  "version": "0.1.0",
+  "publisher": "nivrit",
+  "private": true,
+  "packageManager": "bun@1.3.14",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/infiniolabs/nivrit"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:nivritExplorer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "nivrit.signIn",
+        "title": "Sign In",
+        "category": "Nivrit"
+      },
+      {
+        "command": "nivrit.signOut",
+        "title": "Sign Out",
+        "category": "Nivrit"
+      },
+      {
+        "command": "nivrit.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "Nivrit"
+      },
+      {
+        "command": "nivrit.copySecret",
+        "title": "Copy Secret to Clipboard",
+        "category": "Nivrit"
+      },
+      {
+        "command": "nivrit.viewSecret",
+        "title": "View Secret",
+        "category": "Nivrit"
+      },
+      {
+        "command": "nivrit.copyEnv",
+        "title": "Copy All as .env",
+        "category": "Nivrit"
+      },
+      {
+        "command": "nivrit.insertIntoEnv",
+        "title": "Insert into .env File",
+        "category": "Nivrit"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "nivritExplorer",
+          "name": "Nivrit",
+          "when": "true"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "nivrit.refresh",
+          "when": "view == nivritExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "nivrit.signIn",
+          "when": "view == nivritExplorer"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nivrit.copySecret",
+          "when": "view == nivritExplorer && viewItem == secret",
+          "group": "1_nivrit@1"
+        },
+        {
+          "command": "nivrit.viewSecret",
+          "when": "view == nivritExplorer && viewItem == secret",
+          "group": "1_nivrit@2"
+        },
+        {
+          "command": "nivrit.insertIntoEnv",
+          "when": "view == nivritExplorer && viewItem == environment",
+          "group": "1_nivrit@2"
+        },
+        {
+          "command": "nivrit.copyEnv",
+          "when": "view == nivritExplorer && viewItem == environment",
+          "group": "1_nivrit@1"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "nivritExplorer",
+        "contents": "Sign in to Nivrit to browse secrets.\n[Sign In](command:nivrit.signIn)",
+        "when": "workbenchState != empty"
+      }
+    ],
+    "configuration": {
+      "title": "Nivrit",
+      "properties": {
+        "nivrit.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:4000",
+          "description": "Base URL of the Nivrit API server"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "bunx @vscode/vsce package --out nivrit-vscode.vsix",
+    "vscode:prepublish": "bun run build:wasm && bun run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.5"
+  }
+}

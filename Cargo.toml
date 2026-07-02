@@ -1,0 +1,86 @@
+[workspace]
+members = [
+    "crates/nivrit-core",
+    "crates/nivrit-crypto",
+    "crates/nivrit-db",
+    "crates/nivrit-auth",
+    "crates/nivrit-api",
+    "crates/nivrit-cli",
+    "crates/nivrit-web-crypto",
+    "crates/nivrit-crypto-helper",
+    "sdks/rust",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Nivrit Contributors"]
+license = "AGPL-3.0-only"
+repository = "https://github.com/infiniolabs/nivrit"
+rust-version = "1.94"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.52.3", features = ["full"] }
+
+# Web framework
+axum = "0.8.9"
+tower = "0.5.3"
+tower-http = { version = "0.6.11", features = ["cors", "trace", "timeout", "request-id"] }
+
+# Serialization
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+base64 = "0.22.1"
+
+# Database
+sqlx = { version = "0.9.0", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate",
+] }
+
+# IDs and time
+uuid = { version = "1.23.3", features = ["v4", "serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+
+# Errors
+anyhow = "1.0.102"
+thiserror = "2.0.18"
+
+# Logging
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+
+# CLI
+clap = { version = "4.6.1", features = ["derive"] }
+reqwest = { version = "0.13.4", features = ["json"] }
+regex = "1.12.4"
+
+# Auth
+jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
+argon2 = "0.5.3"
+
+# Crypto
+aes-gcm = "0.10.3"
+chacha20poly1305 = "0.10.1"
+sha2 = "0.11.0"
+hmac = "0.13.0"
+pbkdf2 = "0.13.0"
+rand = "0.8.6"
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+
+# Config
+figment = { version = "0.10.19", features = ["env", "toml"] }
+dotenvy = "0.15.7"
+
+# Validation
+validator = { version = "0.20.0", features = ["derive"] }
+
+[profile.release]
+opt-level = 3
+lto = true

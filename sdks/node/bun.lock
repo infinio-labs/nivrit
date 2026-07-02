@@ -1,0 +1,17 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "@nivrit/sdk",
+      "optionalDependencies": {
+        "@nivrit/helper-darwin-arm64": "0.1.0",
+        "@nivrit/helper-darwin-x64": "0.1.0",
+        "@nivrit/helper-linux-arm64": "0.1.0",
+        "@nivrit/helper-linux-x64": "0.1.0",
+        "@nivrit/helper-win32-x64": "0.1.0",
+      },
+    },
+  },
+  "packages": {}
+}

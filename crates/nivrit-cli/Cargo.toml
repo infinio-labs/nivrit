@@ -1,0 +1,27 @@
+[package]
+name = "nivrit-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "niv"
+path = "src/main.rs"
+
+[dependencies]
+nivrit-core = { path = "../nivrit-core" }
+
+nivrit-crypto = { path = "../nivrit-crypto" }
+
+clap = { workspace = true }
+reqwest = { workspace = true }
+regex = { workspace = true }
+urlencoding = "1.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

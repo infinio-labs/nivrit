@@ -1,0 +1,40 @@
+# Git / CI
+.git
+.github
+.gitignore
+
+# Rust build artifacts
+target
+**/*.rs.bk
+Cargo.lock.md
+
+# Node / frontend
+node_modules
+dist
+*.log
+
+# Environment / secrets
+.env
+.env.*
+!.env.docker.example
+
+# Editor / OS
+.idea
+.vscode
+*.swp
+.DS_Store
+
+# Docs and misc
+*.md
+docs
+fallow
+.claude
+
+# Docker itself
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Large test artifacts
+*.wasm
+!crates/nivrit-web/src/wasm/**/*.wasm

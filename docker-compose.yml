@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: nivrit-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nivrit
+      POSTGRES_PASSWORD: nivrit
+      POSTGRES_DB: nivrit
+    volumes:
+      - nivrit-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nivrit -d nivrit"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: nivrit-api
+    restart: unless-stopped
+    # All secrets and deployment config are injected at runtime from .env.docker
+    # (copy .env.docker.example and fill it in). Nothing here is baked into the
+    # published image. NIVRIT_AUTH_SECRET and NIVRIT_TOTP_ENCRYPTION_KEY are
+    # required — the API refuses to start without real values.
+    env_file:
+      - .env.docker
+    ports:
+      - "4000:4000"
+    environment:
+      # Only values wired to this local compose stack (bundled Postgres + web).
+      # These intentionally override .env.docker for the dev stack.
+      DATABASE_URL: postgres://nivrit:nivrit@postgres:5432/nivrit
+      NIVRIT_CORS_ORIGIN: http://localhost:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: nivrit-web
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  nivrit-postgres-data:

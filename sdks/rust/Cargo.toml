@@ -1,0 +1,20 @@
+[package]
+name = "nivrit-sdk"
+description = "Nivrit secrets SDK for Rust"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nivrit-crypto = { path = "../../crates/nivrit-crypto", version = "0.1.0" }
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }

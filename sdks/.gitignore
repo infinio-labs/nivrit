@@ -1,0 +1,19 @@
+# Transient release-build artifacts (populated from CI helper binaries, never committed)
+helpers/
+dist/
+build/
+pkg/
+*.tgz
+*.gem
+*.whl
+*.nupkg
+*.egg-info/
+
+# Per-platform helper binaries dropped in at build time
+node/npm/
+go/nivrit/bin/*/
+python/nivrit/bin/nivrit-crypto-helper*
+ruby/vendor/
+java/src/main/resources/native/
+dotnet/Nivrit/native/
+elixir/priv/native/

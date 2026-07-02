@@ -1,0 +1,47 @@
+[package]
+name = "nivrit-crypto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nivrit-core = { path = "../nivrit-core" }
+
+aes-gcm = { workspace = true }
+chacha20poly1305 = { workspace = true }
+sha2 = { workspace = true }
+argon2 = { workspace = true }
+rand = { workspace = true }
+x25519-dalek = { workspace = true }
+base64 = { workspace = true }
+ml-kem = { version = "0.3.2", default-features = false, features = [
+    "alloc",
+    "getrandom",
+] }
+hkdf = "0.13.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# Post-quantum signatures (Phase 4).
+ml-dsa = { version = "0.1.1", optional = true }
+pqcrypto-sphincsplus = { version = "0.7.2", optional = true }
+pqcrypto-traits = { version = "0.3.5", optional = true }
+
+# Cloud KMS KEK backends (optional).
+aws-config = { version = "1.8.18", optional = true }
+aws-sdk-kms = { version = "1.111.0", optional = true }
+azure_identity = { version = "1.0.0", optional = true }
+azure_core = { version = "1.0.0", optional = true }
+azure_security_keyvault_keys = { version = "1.0.0", optional = true }
+
+[features]
+default = ["pq-signatures"]
+pq-signatures = ["dep:ml-dsa", "dep:pqcrypto-sphincsplus", "dep:pqcrypto-traits"]
+kek-aws = ["dep:aws-config", "dep:aws-sdk-kms"]
+kek-azure = ["dep:azure_identity", "dep:azure_core", "dep:azure_security_keyvault_keys"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

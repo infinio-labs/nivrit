@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: fmt / clippy / tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: nivrit
+          POSTGRES_PASSWORD: nivrit
+          POSTGRES_DB: nivrit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # sqlx verifies query macros against this live database at compile time.
+      DATABASE_URL: postgres://nivrit:nivrit@localhost:5432/nivrit
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
+
+      - name: Run migrations
+        run: sqlx migrate run --source crates/nivrit-db/migrations
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        # wasm-bindgen crate is excluded; it targets wasm32, not the host.
+        run: cargo clippy --workspace --exclude nivrit-web-crypto --all-targets -- -D warnings
+
+      - name: Tests (unit + db integration)
+        # nivrit-sdk is excluded: its only test is an e2e smoke needing a live
+        # API server, which the sdks.yml workflow covers.
+        run: cargo test --workspace --exclude nivrit-web-crypto --exclude nivrit-sdk
+
+  frontend:
+    name: web typecheck / tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install web dependencies
+        working-directory: crates/nivrit-web
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: crates/nivrit-web
+        run: bun run typecheck
+
+      - name: Tests
+        working-directory: crates/nivrit-web
+        run: bun test
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit

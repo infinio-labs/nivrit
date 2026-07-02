@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM secret_tags WHERE secret_id = $1 AND tag_id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f5bfe6b199ffa60025390c52835667a361a98dd41469b03b4fded8946131d9a4"
+}

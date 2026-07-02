@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE users\n        SET public_key = $1,\n            encrypted_private_key = $2,\n            private_key_nonce = $3,\n            private_key_algorithm = $4,\n            updated_at = NOW()\n        WHERE id = $5\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Bytea",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a01b6b3ade1b8e21ec89b806b5f8e268a0a0bc413300f94ee3dbace3c73bc32e"
+}

@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO project_memberships (project_id, user_id, role, encrypted_project_key, project_key_nonce, project_key_algorithm)\n        VALUES ($1, $2, $3, $4, $5, $6)\n        ON CONFLICT (project_id, user_id) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Bytea",
+        "Bytea",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0cbbfda1a83f776813426bcd87da02eaf9e4094e107e76d3265c8012d1807c19"
+}

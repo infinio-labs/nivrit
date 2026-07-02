@@ -1,0 +1,35 @@
+[package]
+name = "nivrit-web-crypto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nivrit-core = { path = "../nivrit-core" }
+nivrit-crypto = { path = "../nivrit-crypto", default-features = false }
+
+wasm-bindgen = "0.2.100"
+js-sys = "0.3.77"
+serde-wasm-bindgen = "0.6.5"
+console_error_panic_hook = "0.1.7"
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# The `getrandom` features are required for nivrit-crypto to use OS RNG in WASM.
+# `ml-kem` uses getrandom 0.4 (feature `wasm_js`); older deps use 0.2 (feature `js`).
+getrandom = { version = "0.4.2", features = ["wasm_js"] }
+getrandom02 = { package = "getrandom", version = "0.2.17", features = ["js"] }
+uuid = { workspace = true, features = ["js"] }
+
+[dependencies.web-sys]
+version = "0.3.77"
+features = ["console"]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.50"

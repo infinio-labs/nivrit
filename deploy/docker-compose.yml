@@ -1,0 +1,50 @@
+# Production-oriented sample compose.
+# 1. Copy .env.example to .env and fill in real secrets.
+# 2. Pin the image tags to a released version instead of `latest`.
+# 3. Run: docker compose -f deploy/docker-compose.yml --env-file .env up -d
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nivrit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?POSTGRES_PASSWORD required}
+      POSTGRES_DB: ${POSTGRES_DB:-nivrit}
+    volumes:
+      - nivrit-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nivrit} -d ${POSTGRES_DB:-nivrit}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: ghcr.io/infiniolabs/nivrit-api:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-nivrit}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nivrit}
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    image: ghcr.io/infiniolabs/nivrit-web:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  nivrit-postgres-data:

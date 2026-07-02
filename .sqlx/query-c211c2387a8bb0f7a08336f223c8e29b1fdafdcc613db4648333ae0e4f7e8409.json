@@ -1,0 +1,114 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, project_id, environment_id, folder_id, source_environment_id, source_folder_id, position, created_at\n        FROM secret_imports\n        WHERE project_id = $1 AND environment_id = $2 AND folder_id IS NOT DISTINCT FROM $3\n        ORDER BY position ASC, created_at ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secret_imports",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "project_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secret_imports",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "environment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secret_imports",
+            "name": "environment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "folder_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secret_imports",
+            "name": "folder_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "source_environment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secret_imports",
+            "name": "source_environment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "source_folder_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "secret_imports",
+            "name": "source_folder_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "position",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "secret_imports",
+            "name": "position"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "secret_imports",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c211c2387a8bb0f7a08336f223c8e29b1fdafdcc613db4648333ae0e4f7e8409"
+}

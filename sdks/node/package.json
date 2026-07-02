@@ -1,0 +1,30 @@
+{
+  "name": "@nivrit/sdk",
+  "version": "0.1.0",
+  "description": "Nivrit secrets SDK for Node.js",
+  "packageManager": "bun@1.3.14",
+  "main": "src/index.js",
+  "files": [
+    "src/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test test/smoke.js",
+    "package": "bun pack"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "optionalDependencies": {
+    "@nivrit/helper-linux-x64": "0.1.0",
+    "@nivrit/helper-linux-arm64": "0.1.0",
+    "@nivrit/helper-darwin-x64": "0.1.0",
+    "@nivrit/helper-darwin-arm64": "0.1.0",
+    "@nivrit/helper-win32-x64": "0.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/infiniolabs/nivrit"
+  },
+  "license": "AGPL-3.0-only"
+}
