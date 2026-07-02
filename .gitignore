@@ -46,9 +46,16 @@ test-results/
 playwright-report/
 playwright/.cache/
 
+# VS Code extension build artifacts
+extensions/vscode/out/
+extensions/vscode/*.vsix
+extensions/vscode/wasm/pkg/
+
 # SDK artifacts
 sdks/dist/
 sdks/python/.venv/
+sdks/python/**/__pycache__/
+sdks/python/**/*.pyc
 sdks/python/**/*.egg-info/
 sdks/python/build/
 sdks/node/*.tgz
