@@ -1,3 +1,0 @@
-[test]
-# Keep the Bun unit-test runner focused on src/ and ignore Playwright E2E specs.
-pathIgnorePatterns = ["e2e/**"]

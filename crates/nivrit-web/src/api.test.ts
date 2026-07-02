@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, vi, test } from 'vitest';
 import { getSecret, login, setSecret } from './api';
 
 describe('login', () => {
@@ -13,7 +13,7 @@ describe('login', () => {
   });
 
   test('returns token and user on success', async () => {
-    globalThis.fetch = mock(() =>
+    globalThis.fetch = vi.fn(() =>
       Promise.resolve(
         new Response(JSON.stringify({ status: 'Success', token: 'abc123', user: { email: 'a@b.com' } }), {
           status: 200,
@@ -32,7 +32,7 @@ describe('login', () => {
   });
 
   test('throws on non-ok response', async () => {
-    globalThis.fetch = mock(() =>
+    globalThis.fetch = vi.fn(() =>
       Promise.resolve(new Response('unauthorized', { status: 401 }))
     ) as unknown as typeof globalThis.fetch;
 
@@ -52,7 +52,7 @@ describe('setSecret', () => {
   });
 
   test('resolves on success', async () => {
-    globalThis.fetch = mock(() =>
+    globalThis.fetch = vi.fn(() =>
       Promise.resolve(new Response(null, { status: 201 }))
     ) as unknown as typeof globalThis.fetch;
 
@@ -68,7 +68,7 @@ describe('setSecret', () => {
   });
 
   test('throws on non-ok response', async () => {
-    globalThis.fetch = mock(() =>
+    globalThis.fetch = vi.fn(() =>
       Promise.resolve(new Response('bad request', { status: 400 }))
     ) as unknown as typeof globalThis.fetch;
 
@@ -90,7 +90,7 @@ describe('getSecret', () => {
   });
 
   test('returns encrypted secret on success', async () => {
-    globalThis.fetch = mock(() =>
+    globalThis.fetch = vi.fn(() =>
       Promise.resolve(
         new Response(JSON.stringify({ encrypted_value: 'cipher', nonce: 'nonce' }), {
           status: 200,
@@ -110,7 +110,7 @@ describe('getSecret', () => {
   });
 
   test('throws on non-ok response', async () => {
-    globalThis.fetch = mock(() =>
+    globalThis.fetch = vi.fn(() =>
       Promise.resolve(new Response('not found', { status: 404 }))
     ) as unknown as typeof globalThis.fetch;
 

@@ -42,8 +42,8 @@ fmt:
 
 # Install web UI dependencies
 install-web:
-    cd crates/nivrit-web && bun install
+    cd crates/nivrit-web && pnpm install
 
 # Run the web UI dev server
 dev-web:
-    cd crates/nivrit-web && bun run dev
+    cd crates/nivrit-web && pnpm run dev

@@ -7,7 +7,7 @@ development environment, run tests, and submit changes.
 
 1. Install the toolchains:
    - [Rust](https://rustup.rs/) (see `rust-version` in `Cargo.toml`)
-   - [Bun](https://bun.sh/) 1.3.14
+   - [Node.js](https://nodejs.org/) 22+ and [pnpm](https://pnpm.io/) 9+
    - Docker + Docker Compose (for Postgres)
    - `sqlx-cli` (`cargo install sqlx-cli --no-default-features --features native-tls,postgres`)
    - `wasm-pack` (optional; only needed to rebuild the web WASM module)
@@ -46,24 +46,24 @@ For the web frontend:
 
 ```bash
 cd crates/nivrit-web
-bun install --frozen-lockfile
-bun run typecheck
-bun test
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm run test
 ```
 
 For the Node.js SDK:
 
 ```bash
 cd sdks/node
-bun install
-bun test test/smoke.js
+pnpm install
+pnpm test
 ```
 
 ## Code style
 
 - Format Rust with `cargo fmt`.
 - Lint Rust with `cargo clippy --workspace --exclude nivrit-web-crypto --all-targets -- -D warnings`.
-- The TypeScript/JavaScript projects use Bun; run `bun run typecheck` for type checking.
+- The TypeScript/JavaScript projects use pnpm; run `pnpm run typecheck` for type checking.
 - Keep changes focused. One logical change per pull request.
 
 ## Commit messages

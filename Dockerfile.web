@@ -3,19 +3,16 @@
 # -----------------------------------------------------------------------------
 # Build stage: compile the Vite + React frontend.
 # -----------------------------------------------------------------------------
-FROM oven/bun:1.3.14 AS builder
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
-# vite-plugin-top-level-await needs a real Node runtime at build time, so install
-# Node alongside Bun. Dependencies are still installed with Bun.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# Install pnpm globally.
+RUN npm install -g pnpm@11.9.0
 
 # Install dependencies first so Docker can cache this layer.
-COPY crates/nivrit-web/package.json crates/nivrit-web/bun.lock ./
-RUN bun install --frozen-lockfile
+COPY crates/nivrit-web/package.json crates/nivrit-web/pnpm-lock.yaml crates/nivrit-web/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Copy the rest of the frontend source, including the checked-in WASM package.
 COPY crates/nivrit-web/ ./
@@ -23,7 +20,8 @@ COPY crates/nivrit-web/ ./
 # Build for production. The WASM package is already checked in; we skip the
 # wasm-pack build step and point the API client at the nginx-proxied /api path.
 ENV VITE_API_URL=/api
-RUN bun run typecheck && node ./node_modules/.bin/vite build
+ENV CI=true
+RUN pnpm run typecheck && pnpm exec vite build
 # The crypto WASM package is loaded dynamically at runtime from a path relative
 # to the bundled JS chunk, so Vite does not automatically copy it into dist.
 RUN mkdir -p dist/assets/wasm/pkg && cp -r src/wasm/pkg/* dist/assets/wasm/pkg/

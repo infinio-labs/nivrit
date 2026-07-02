@@ -2,15 +2,15 @@
   "name": "@nivrit/sdk",
   "version": "0.1.0",
   "description": "Nivrit secrets SDK for Node.js",
-  "packageManager": "bun@1.3.14",
+  "packageManager": "pnpm@11.9.0",
   "main": "src/index.js",
   "files": [
     "src/",
     "README.md"
   ],
   "scripts": {
-    "test": "bun test test/smoke.js",
-    "package": "bun pack"
+    "test": "node test/smoke.js",
+    "package": "pnpm pack"
   },
   "engines": {
     "node": ">=18.0.0"

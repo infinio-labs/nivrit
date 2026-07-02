@@ -10,16 +10,16 @@ Produces artifacts in `sdks/dist/` for every SDK whose toolchain is installed.
 
 ## Per-language publishing
 
-### Node.js — Bun / npm registry
+### Node.js — pnpm / npm registry
 
 ```bash
 cd sdks/node
-bun version patch   # or minor/major
-bun publish --access public
+pnpm version patch   # or minor/major
+pnpm publish --access public
 ```
 
 Requires an npm token with publish rights for the `@nivrit` scope. The CI
-workflow writes `~/.npmrc` so `bun publish` can authenticate.
+workflow writes `~/.npmrc` so `pnpm publish` can authenticate.
 
 ### Python — PyPI
 

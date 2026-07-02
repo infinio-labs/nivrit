@@ -4,7 +4,7 @@
 # (asset names exactly as produced by .github/workflows/sdks.yml build-helper).
 # Each package pins to this SDK's version, so a stale helper can never resolve.
 set -euo pipefail
-VERSION=$(bun -e "console.log(require('./package.json').version)")
+VERSION=$(node -p "require('./package.json').version")
 
 # nodeTag : CI asset suffix : os : cpu
 rows=(
@@ -40,5 +40,5 @@ EOF
   echo "built $dir"
 done
 
-echo "Publish all: for d in npm/helper-*; do (cd \"\$d\" && bun publish --access public); done"
-echo "Then publish the main SDK: bun publish --access public"
+echo "Publish all: for d in npm/helper-*; do (cd \"\$d\" && pnpm publish --access public); done"
+echo "Then publish the main SDK: pnpm publish --access public"

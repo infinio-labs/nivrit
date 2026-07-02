@@ -1,10 +1,10 @@
 # Nivrit Node.js SDK
 
 ```bash
-bun add @nivrit/sdk
+pnpm add @nivrit/sdk
 ```
 
-(Works with npm/pnpm/yarn too — Bun is the project's package manager.)
+(Works with npm/yarn too — pnpm is the project's package manager.)
 
 ## Usage
 
@@ -28,5 +28,5 @@ The SDK expects the `nivrit-crypto-helper` binary on `PATH` or at `NIVRIT_CRYPTO
 ## Test
 
 ```bash
-bun test test/smoke.js
+pnpm test
 ```

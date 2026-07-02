@@ -6,6 +6,9 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [wasm(), topLevelAwait(), tailwindcss(), react()],
+  build: {
+    target: 'esnext',
+  },
   server: {
     port: 3000,
     proxy: {

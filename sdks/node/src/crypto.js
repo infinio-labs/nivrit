@@ -5,8 +5,8 @@ const fs = require('fs');
 function findHelper() {
   if (process.env.NIVRIT_CRYPTO_HELPER) return process.env.NIVRIT_CRYPTO_HELPER;
   const exe = process.platform === 'win32' ? 'nivrit-crypto-helper.exe' : 'nivrit-crypto-helper';
-  // Bundled platform package, installed via optionalDependencies (Bun picks the
-  // one matching os+cpu). See scripts/build-platform-packages.sh.
+  // Bundled platform package, installed via optionalDependencies (the package
+  // manager picks the one matching os+cpu). See scripts/build-platform-packages.sh.
   try {
     return require.resolve(`@nivrit/helper-${process.platform}-${process.arch}/bin/${exe}`);
   } catch (_) { /* not installed for this platform — fall through */ }
