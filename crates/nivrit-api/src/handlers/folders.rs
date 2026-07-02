@@ -72,9 +72,14 @@ pub async fn create_folder(
     let membership = require_project_member(&state.db, project_id, user.id).await?;
     require_role(&membership, Role::Member)?;
 
-    let row =
-        queries::create_folder(&state.db, project_id, req.environment_id, &req.name, &req.path)
-            .await?;
+    let row = queries::create_folder(
+        &state.db,
+        project_id,
+        req.environment_id,
+        &req.name,
+        &req.path,
+    )
+    .await?;
     Ok(Json(to_response(row)))
 }
 

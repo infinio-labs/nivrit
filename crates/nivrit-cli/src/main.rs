@@ -451,10 +451,9 @@ async fn main() -> anyhow::Result<()> {
             name,
             color,
         } => create_tag(&client, &config, format, &project_id, &name, &color).await?,
-        Commands::DeleteTag {
-            project_id,
-            tag_id,
-        } => delete_tag_cmd(&client, &config, format, &project_id, &tag_id).await?,
+        Commands::DeleteTag { project_id, tag_id } => {
+            delete_tag_cmd(&client, &config, format, &project_id, &tag_id).await?
+        }
         Commands::SecretTags {
             project_id,
             environment_id,
@@ -1153,7 +1152,10 @@ async fn create_folder(
     path: &str,
 ) -> anyhow::Result<()> {
     let res: serde_json::Value = client
-        .post(format!("{}/projects/{}/folders", config.server_url, project_id))
+        .post(format!(
+            "{}/projects/{}/folders",
+            config.server_url, project_id
+        ))
         .bearer_auth(config.token.as_deref().unwrap_or(""))
         .json(&serde_json::json!({
             "environment_id": environment_id,
@@ -1200,11 +1202,7 @@ async fn delete_folder_cmd(
         .await?
         .json()
         .await?;
-    print_output(
-        format,
-        &format!("deleted folder {}", folder_id),
-        &res,
-    );
+    print_output(format, &format!("deleted folder {}", folder_id), &res);
     Ok(())
 }
 
@@ -1263,7 +1261,10 @@ async fn create_import(
     position: i32,
 ) -> anyhow::Result<()> {
     let res: serde_json::Value = client
-        .post(format!("{}/projects/{}/imports", config.server_url, project_id))
+        .post(format!(
+            "{}/projects/{}/imports",
+            config.server_url, project_id
+        ))
         .bearer_auth(config.token.as_deref().unwrap_or(""))
         .json(&serde_json::json!({
             "environment_id": environment_id,
@@ -1321,7 +1322,10 @@ async fn list_tags(
     project_id: &str,
 ) -> anyhow::Result<()> {
     let res: serde_json::Value = client
-        .get(format!("{}/projects/{}/tags", config.server_url, project_id))
+        .get(format!(
+            "{}/projects/{}/tags",
+            config.server_url, project_id
+        ))
         .bearer_auth(config.token.as_deref().unwrap_or(""))
         .send()
         .await?
@@ -1354,7 +1358,10 @@ async fn create_tag(
     color: &str,
 ) -> anyhow::Result<()> {
     let res: serde_json::Value = client
-        .post(format!("{}/projects/{}/tags", config.server_url, project_id))
+        .post(format!(
+            "{}/projects/{}/tags",
+            config.server_url, project_id
+        ))
         .bearer_auth(config.token.as_deref().unwrap_or(""))
         .json(&serde_json::json!({"name": name, "color": color}))
         .send()
@@ -1927,7 +1934,10 @@ async fn fetch_env_secrets(
         let ciphertext = STANDARD.decode(encrypted_value)?;
         let nonce = STANDARD.decode(nonce)?;
         let plaintext = nivrit_crypto::decrypt_value(&ciphertext, &nonce, project_key)?;
-        map.insert(key.to_string(), String::from_utf8_lossy(&plaintext).to_string());
+        map.insert(
+            key.to_string(),
+            String::from_utf8_lossy(&plaintext).to_string(),
+        );
     }
     Ok(map)
 }

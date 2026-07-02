@@ -25,14 +25,23 @@ struct Rule {
 // which is noisy without entropy scoring.
 fn rules() -> Vec<Rule> {
     let pats: &[(&str, &str)] = &[
-        ("Private Key", r"-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY-----"),
+        (
+            "Private Key",
+            r"-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY-----",
+        ),
         ("AWS Access Key", r"\bAKIA[0-9A-Z]{16}\b"),
         ("GitHub Token", r"\bgh[pousr]_[0-9A-Za-z]{36,}\b"),
         ("Slack Token", r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b"),
         ("Google API Key", r"\bAIza[0-9A-Za-z_\-]{35}\b"),
         ("Stripe Secret Key", r"\b(?:sk|rk)_live_[0-9A-Za-z]{24,}\b"),
-        ("SendGrid API Key", r"\bSG\.[0-9A-Za-z_\-]{22}\.[0-9A-Za-z_\-]{43}\b"),
-        ("JWT", r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
+        (
+            "SendGrid API Key",
+            r"\bSG\.[0-9A-Za-z_\-]{22}\.[0-9A-Za-z_\-]{43}\b",
+        ),
+        (
+            "JWT",
+            r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b",
+        ),
     ];
     pats.iter()
         .map(|(name, p)| Rule {
@@ -92,7 +101,11 @@ fn walk(dir: &Path, rules: &[Rule], out: &mut Vec<Finding>) {
             continue;
         }
         // Skip oversized or unreadable files.
-        if path.metadata().map(|m| m.len() > MAX_FILE_BYTES).unwrap_or(true) {
+        if path
+            .metadata()
+            .map(|m| m.len() > MAX_FILE_BYTES)
+            .unwrap_or(true)
+        {
             continue;
         }
         let bytes = match std::fs::read(&path) {
@@ -141,7 +154,12 @@ mod tests {
     #[test]
     fn clean_text_no_findings() {
         let mut out = Vec::new();
-        scan_text("f.rs", "let port = 8080;\nlet host = \"localhost\";", &rules(), &mut out);
+        scan_text(
+            "f.rs",
+            "let port = 8080;\nlet host = \"localhost\";",
+            &rules(),
+            &mut out,
+        );
         assert!(out.is_empty());
     }
 }

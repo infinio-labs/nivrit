@@ -324,9 +324,7 @@ async fn login_rate_limit_prunes_stale_rows() {
     queries::prune_login_attempts(&pool, 60).await.unwrap();
 
     // Pruned (stale, not locked) -> treated as a fresh, unblocked key.
-    assert!(
-        !queries::login_attempt_blocked(&pool, &key, 60, 3)
-            .await
-            .unwrap()
-    );
+    assert!(!queries::login_attempt_blocked(&pool, &key, 60, 3)
+        .await
+        .unwrap());
 }

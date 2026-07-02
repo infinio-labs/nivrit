@@ -15,10 +15,12 @@ RUN apt-get update \
 # Build offline using the checked-in SQLx query metadata.
 ENV SQLX_OFFLINE=true
 
-# Copy workspace manifests, source, and the SQLx offline query metadata.
+# Copy workspace manifests, source, the SQLx offline query metadata, and the
+# Rust SDK crate (referenced as a workspace member).
 COPY Cargo.toml Cargo.lock ./
 COPY .sqlx ./.sqlx
 COPY crates ./crates
+COPY sdks/rust ./sdks/rust
 
 # Build the release binaries. The cache mounts keep dependency downloads and
 # intermediate artifacts across rebuilds without bloating the final image.

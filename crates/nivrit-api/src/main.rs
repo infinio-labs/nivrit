@@ -82,7 +82,10 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
-        .route("/metrics", get(move || std::future::ready(metric_handle.render())))
+        .route(
+            "/metrics",
+            get(move || std::future::ready(metric_handle.render())),
+        )
         .route("/register", post(handlers::auth::register))
         .route("/login", post(handlers::auth::login))
         .route("/auth/register", post(handlers::auth::register))

@@ -103,9 +103,14 @@ pub async fn list_secret_tags(
 ) -> ApiResult<Json<Vec<TagResponse>>> {
     require_project_member(&state.db, project_id, user.id).await?;
 
-    let secret =
-        queries::get_secret(&state.db, project_id, query.environment_id, query.folder_id, &key)
-            .await?;
+    let secret = queries::get_secret(
+        &state.db,
+        project_id,
+        query.environment_id,
+        query.folder_id,
+        &key,
+    )
+    .await?;
     let rows = queries::list_secret_tags(&state.db, secret.id).await?;
     Ok(Json(rows.into_iter().map(to_response).collect()))
 }
@@ -119,10 +124,18 @@ pub async fn attach_secret_tag(
     let membership = require_project_member(&state.db, project_id, user.id).await?;
     require_role(&membership, Role::Member)?;
 
-    let secret =
-        queries::get_secret(&state.db, project_id, req.environment_id, req.folder_id, &key).await?;
+    let secret = queries::get_secret(
+        &state.db,
+        project_id,
+        req.environment_id,
+        req.folder_id,
+        &key,
+    )
+    .await?;
     queries::attach_secret_tag(&state.db, secret.id, req.tag_id).await?;
-    Ok(Json(serde_json::json!({"attached": true, "tag_id": req.tag_id})))
+    Ok(Json(
+        serde_json::json!({"attached": true, "tag_id": req.tag_id}),
+    ))
 }
 
 pub async fn detach_secret_tag(
@@ -134,9 +147,16 @@ pub async fn detach_secret_tag(
     let membership = require_project_member(&state.db, project_id, user.id).await?;
     require_role(&membership, Role::Member)?;
 
-    let secret =
-        queries::get_secret(&state.db, project_id, query.environment_id, query.folder_id, &key)
-            .await?;
+    let secret = queries::get_secret(
+        &state.db,
+        project_id,
+        query.environment_id,
+        query.folder_id,
+        &key,
+    )
+    .await?;
     queries::detach_secret_tag(&state.db, secret.id, tag_id).await?;
-    Ok(Json(serde_json::json!({"detached": true, "tag_id": tag_id})))
+    Ok(Json(
+        serde_json::json!({"detached": true, "tag_id": tag_id}),
+    ))
 }

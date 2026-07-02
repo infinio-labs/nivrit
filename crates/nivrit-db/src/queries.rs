@@ -794,10 +794,7 @@ pub async fn list_secret_tags(pool: &DbPool, secret_id: Uuid) -> Result<Vec<TagR
     .map_err(map_db_error)
 }
 
-pub async fn list_secret_versions(
-    pool: &DbPool,
-    secret_id: Uuid,
-) -> Result<Vec<SecretVersionRow>> {
+pub async fn list_secret_versions(pool: &DbPool, secret_id: Uuid) -> Result<Vec<SecretVersionRow>> {
     sqlx::query_as!(
         SecretVersionRow,
         r#"
