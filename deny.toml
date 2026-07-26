@@ -1,0 +1,40 @@
+# Supply-chain policy. `cargo audit` (also in CI) covers known vulnerabilities;
+# this file covers what it does not: licence compatibility, yanked crates, and
+# unexpected sources.
+
+[licenses]
+# Nivrit is distributed under AGPL-3.0-only. These are the licences that can be
+# combined with it. Anything else must be reviewed before it enters the tree.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "0BSD",
+    # webpki-roots ships the Mozilla CA bundle under a permissive data licence.
+    "CDLA-Permissive-2.0",
+    # Nivrit's own crates.
+    "AGPL-3.0-only",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[advisories]
+yanked = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

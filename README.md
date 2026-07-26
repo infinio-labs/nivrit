@@ -27,7 +27,10 @@ differently:
 
 - **Zero-knowledge by default, not as an option.** In Nivrit the server stores *only
   ciphertext* — plaintext secrets are encrypted in the browser (WASM) / CLI before they
-  ever leave the client. The backend never has the keys or the plaintext.
+  ever leave the client. The master password is never transmitted either: clients send
+  an opaque `auth_hash` derived from it, while the key that unwraps the private key is
+  derived separately and never leaves the device. An operator who logs every request
+  still cannot decrypt anything.
 - **Post-quantum today.** Key exchange uses a hybrid **X25519 + ML-KEM-768** scheme and
   audit-log signatures use **ML-DSA-65**. This is built into the core, not a roadmap item.
 - **AGPL-3.0.** The license keeps hosted/modified versions open, so the zero-knowledge

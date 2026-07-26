@@ -1557,12 +1557,19 @@ pub async fn get_user_by_token_hash(
     Ok((pat, user))
 }
 
+/// Record that a token was used, at most once a minute.
+///
+/// Every PAT-authenticated request would otherwise write the same row, making a
+/// busy token a contention hotspot and generating dead tuples for autovacuum to
+/// chase. The timestamp is only ever read by humans checking when a token was
+/// last active, so minute resolution loses nothing.
 pub async fn touch_personal_access_token(pool: &DbPool, token_id: Uuid) -> Result<()> {
     sqlx::query!(
         r#"
         UPDATE personal_access_tokens
         SET last_used_at = NOW()
         WHERE id = $1
+          AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
         "#,
         token_id
     )

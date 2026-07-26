@@ -55,6 +55,12 @@ COPY --from=builder /usr/src/nivrit/crates/nivrit-db/migrations /usr/local/share
 COPY scripts/docker-entrypoint-api.sh /usr/local/bin/docker-entrypoint-api.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint-api.sh
 
+# Run as an unprivileged user. A container process that does not need root
+# should not have it: it turns a container escape or a file-write bug from a
+# host-level compromise into a contained one.
+RUN useradd --system --create-home --uid 10001 nivrit
+USER nivrit
+
 # No runtime configuration is baked into the image: host/port default in code,
 # everything else (DATABASE_URL, secrets, OAuth, SMTP, ...) is injected at
 # runtime. EXPOSE is metadata only, not an environment variable.

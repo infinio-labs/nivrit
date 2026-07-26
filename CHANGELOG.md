@@ -7,7 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The master password is no longer sent to the server.** Clients now derive an
+  opaque `auth_hash` from it and transmit only that, while the key that unwraps
+  the private key is derived separately and never leaves the device. Previously
+  the password crossed the wire on register, login, OAuth setup, and password
+  reset, and registration decrypted the user's private key server-side — so a
+  malicious or compromised server could have read every secret. Recovery codes
+  are now generated client-side and never transmitted either.
+- Argon2id now runs on the blocking pool instead of the async runtime, where it
+  parked worker threads and starved unrelated requests.
+- Registration is rate-limited. It was unauthenticated and cost four 64 MiB
+  Argon2id hashes per call.
+- Login is rate-limited per IP *and* per email. Keying on `email|ip` alone meant
+  rotating source addresses gave unlimited guesses against one account.
+- Key material (ML-KEM seeds, derived keys, unwrapped private keys) is zeroized
+  on drop.
+- The CLI config, which holds the plaintext private key and every project key,
+  is written `0600` in a `0700` directory instead of world-readable `0644`.
+  Existing files are tightened on the next save.
+- Replacing an existing TOTP secret now requires re-authentication; a stolen
+  session token was previously enough to swap in a new authenticator.
+- `X-Forwarded-For` is honoured for rate limiting when `NIVRIT_TRUSTED_PROXY` is
+  set, so deployments behind the bundled nginx no longer share one bucket.
+
+### Fixed
+
+- Key rotation is a single transaction and now rotates the recovery blob with
+  the key pair. A partial rotation permanently locked a user out of their
+  projects, and a stale recovery blob restored a pre-rotation key at reset time.
+  Rotation no longer requires the Member role, which prevented viewers from
+  rotating keys they hold.
+- `disable_totp` no longer panics on a short TOTP blob.
+- `wasm-pack build` works again; the vendored `wasm-opt` predates the
+  bulk-memory instructions rustc emits.
+- Repository URLs across the README, SECURITY.md, deployment samples, and every
+  SDK manifest pointed at a non-existent GitHub organisation.
+- Removed five links to a deleted `ROADMAP.md`.
+
+### Added
+
+- `cargo deny` in CI for licence compatibility, yanked crates, and sources.
+- Pagination on `list_secrets` and `list_secret_versions`.
+- Known-answer tests pinning credential derivation, plus verification that the
+  WASM module and crypto-helper produce identical values.
+
 ### Changed
+
+- **Breaking:** `/auth/register`, `/auth/login`, `/auth/oauth/setup`,
+  `/auth/reset-password`, `/auth/totp/setup` and `/auth/totp/disable` take an
+  `auth_hash` instead of a password, and `/auth/reset-password/begin` is new.
+  Existing password hashes cannot be migrated, because the server never had the
+  password. Pre-1.0 installs must re-register.
+- Recovery keys use 64 MiB / t=3 Argon2id and a per-user salt, replacing
+  `Argon2::default()` with one global salt shared by every user.
+- The API container runs as an unprivileged user.
+- Release builds use `codegen-units = 1` and strip symbols for smaller binaries.
 
 - Standardized all Node.js tooling on Bun (frontend, VS Code extension, Node SDK,
   and GitHub Actions workflows).

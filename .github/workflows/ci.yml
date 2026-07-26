@@ -97,3 +97,19 @@ jobs:
         with:
           tool: cargo-audit@0.22.2
       - run: cargo audit
+
+  deny:
+    name: cargo deny
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.97.1
+      - uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2
+        with:
+          tool: cargo-deny@0.18.6
+      # cargo-audit covers known vulnerabilities; this covers what it does not:
+      # licence compatibility (Nivrit ships AGPL and must not absorb an
+      # incompatible dependency), plus yanked and duplicate crates.
+      - run: cargo deny check licenses bans sources
