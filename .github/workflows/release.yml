@@ -111,7 +111,7 @@ jobs:
             cp "$(find "$d" -type f | head -1)" "release/$(basename "$d")"
           done
           ls -la release
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: release/*
           generate_release_notes: true
