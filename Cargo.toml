@@ -17,7 +17,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Nivrit Contributors"]
 license = "AGPL-3.0-only"
-repository = "https://github.com/infiniolabs/nivrit"
+repository = "https://github.com/infinio-labs/nivrit"
 rust-version = "1.94"
 
 [workspace.dependencies]
@@ -84,3 +84,11 @@ validator = { version = "0.20.0", features = ["derive"] }
 [profile.release]
 opt-level = 3
 lto = true
+
+# cargo-audit: ignore the yanked-crate advisory for `spin` 0.9.8.
+# `spin` is pulled transitively (lazy_static -> num-bigint-dig -> rsa -> jsonwebtoken
+# and via tracing-subscriber). The advisory (RUSTSEC-2026-0190) flags a yanked version,
+# not a vulnerability. We deliberately keep it until the rsa/tracing chains bump to a
+# release that no longer depends on the yanked spin version.
+[package.metadata.cargo-audit]
+ignore = ["RUSTSEC-2026-0190"]
