@@ -15,6 +15,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  HEX_VERSION: 2.5.1
+  REBAR3_URL: https://github.com/erlang/rebar3/releases/download/3.27.0/rebar3
+  REBAR3_SHA512: 0d00494d849fdc521a55142278d1f6ba552954fbd65b80d40df8022f594f05d6c99ed1d731bc263691a04176e11d4c6e126c56ba20dca19c5e42d4ffab2e7e36
 
 jobs:
   # ---- Build the crypto-helper for every platform (SDKs bundle these) --------
@@ -170,7 +173,7 @@ jobs:
         if: matrix.sdk == 'python'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12'
+          python-version: '3.14.6'
       - name: Build Python wheels
         if: matrix.sdk == 'python'
         working-directory: sdks/python
@@ -189,7 +192,7 @@ jobs:
         if: matrix.sdk == 'ruby'
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
-          ruby-version: '3.3'
+          ruby-version: '4.0.6'
       - name: Publish Ruby
         if: matrix.sdk == 'ruby'
         working-directory: sdks/ruby
@@ -249,16 +252,16 @@ jobs:
         if: matrix.sdk == 'elixir'
         uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
         with:
-          otp-version: '27'
-          elixir-version: '1.17'
+          otp-version: '29.0.3'
+          elixir-version: '1.20.2'
       - name: Publish Elixir
         if: matrix.sdk == 'elixir'
         working-directory: sdks/elixir
         run: |
           cp -r ../../helpers .
           bash build-priv.sh
-          mix local.hex --force
-          mix local.rebar --force
+          mix local.hex "$HEX_VERSION" --force
+          mix local.rebar rebar3 "$REBAR3_URL" --sha512 "$REBAR3_SHA512" --force
           mix deps.get
           mix hex.publish --yes
         env:
