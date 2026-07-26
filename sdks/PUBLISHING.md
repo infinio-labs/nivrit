@@ -31,7 +31,7 @@ workflow writes `~/.npmrc` so `bun publish` can authenticate.
 
 ```bash
 cd sdks/python
-python3 -m pip install build twine
+python3 -m pip install build==1.5.0 twine==6.2.0
 python3 -m build
 python3 -m twine upload dist/*
 ```
@@ -70,7 +70,7 @@ dotnet nuget push ../../../sdks/dist/Nivrit.Sdk.*.nupkg --api-key $NUGET_API_KEY
 
 ```bash
 cd sdks/java
-mvn deploy
+./mvnw deploy
 ```
 
 Configure `distributionManagement` and GPG signing in `~/.m2/settings.xml`.

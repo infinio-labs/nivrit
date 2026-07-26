@@ -25,5 +25,5 @@ The SDK expects the `nivrit-crypto-helper` binary on `PATH` or at `NIVRIT_CRYPTO
 
 ```bash
 cd sdks/java
-mvn package
+./mvnw package
 ```

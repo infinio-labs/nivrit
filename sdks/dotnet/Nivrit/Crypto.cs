@@ -96,7 +96,9 @@ public class HelperCrypto
         return resp["result"]!;
     }
 
-    public string HybridSuiteId() => (string?)Call(new JsonObject { ["op"] = "hybrid_suite_id" })!;
+    public string HybridSuiteId() =>
+        (string?)Call(new JsonObject { ["op"] = "hybrid_suite_id" })
+        ?? throw new InvalidOperationException("missing hybrid suite id");
 
     public JsonObject GenerateKeypair(string password) =>
         (JsonObject)Call(new JsonObject { ["op"] = "generate_keypair", ["password"] = password });

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copy CI helper binaries into src/main/resources/native/<os>-<arch>/ so they are
-# bundled into the JAR. Run from sdks/java/ before `mvn package`. Drop CI helper
+# bundled into the JAR. Run from sdks/java/ before `./mvnw package`. Drop CI helper
 # binaries in ./helpers/ first (asset names per .github/workflows/sdks.yml).
 # A single JAR carries all platforms; HelperCrypto extracts the matching one.
 set -euo pipefail

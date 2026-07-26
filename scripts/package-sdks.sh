@@ -48,11 +48,11 @@ fi
 
 echo "=== Packaging Java SDK ==="
 cd "$ROOT_DIR/sdks/java"
-if command -v mvn >/dev/null 2>&1; then
-  mvn package -DskipTests
+if command -v java >/dev/null 2>&1; then
+  ./mvnw package -DskipTests
   cp target/*.jar "$OUT_DIR/" || true
 else
-  echo "mvn not found; skipping Java package"
+  echo "java not found; skipping Java package"
 fi
 
 echo "=== Packaging Ruby SDK ==="

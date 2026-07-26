@@ -1,7 +1,7 @@
 # Nivrit Python SDK
 
 ```bash
-pip install nivrit-sdk
+pip install nivrit-sdk==0.1.0
 ```
 
 ## Usage

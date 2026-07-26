@@ -205,14 +205,14 @@ jobs:
         if: matrix.sdk == 'dotnet'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
-          dotnet-version: '8.0'
+          dotnet-version: '10.0.302'
 
       - name: Setup Java
         if: matrix.sdk == 'java'
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
-          distribution: temurin
-          java-version: '17'
+          distribution: oracle
+          java-version: '25.0.4'
 
       - name: Setup Elixir
         if: matrix.sdk == 'elixir'
@@ -234,7 +234,7 @@ jobs:
       - name: Java crypto test
         if: matrix.sdk == 'java'
         working-directory: sdks/java
-        run: mvn -q -B test
+        run: ./mvnw -q -B test
 
       - name: Elixir crypto test
         if: matrix.sdk == 'elixir'
@@ -309,14 +309,14 @@ jobs:
         if: matrix.sdk == 'java'
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
-          distribution: temurin
-          java-version: '17'
+          distribution: oracle
+          java-version: '25.0.4'
 
       - name: Setup .NET
         if: matrix.sdk == 'dotnet'
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
-          dotnet-version: '8.0'
+          dotnet-version: '10.0.302'
 
       - name: Setup Elixir
         if: matrix.sdk == 'elixir'
@@ -377,7 +377,7 @@ jobs:
         run: |
           cp -r ../../helpers .
           bash build-resources.sh
-          env -u NIVRIT_CRYPTO_HELPER mvn -q -B test
+          env -u NIVRIT_CRYPTO_HELPER ./mvnw -q -B test
 
       - name: .NET embedded resources
         if: matrix.sdk == 'dotnet'
