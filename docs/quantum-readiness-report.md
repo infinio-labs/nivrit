@@ -136,7 +136,7 @@ As of mid-2026, the Rust PQC landscape is maturing but **no single crate is univ
 | **RustCrypto `slh-dsa`** | SLH-DSA (FIPS 205) | Pure Rust, conservative | Optional audit-trail signing |
 | **`libcrux-ml-kem`** | ML-KEM | Formally verified (F*/hax), high assurance | Swap in when verification matters most |
 | **`kyberlib`** | ML-KEM | Pure Rust, ACVP conformant, KyberSlash-clean | Alternative if RustCrypto is not preferred |
-| **`pqcrypto`** | Kyber / Dilithium / SPHINCS+ | Bindings to C (PQClean) | Good for interoperability tests, not preferred for new Rust code |
+| **`pqcrypto`** | Kyber / Dilithium / SPHINCS+ | PQClean-based crates are unmaintained | Do not use |
 | **`liboqs-rust`** | ML-KEM, ML-DSA | Bindings to Open Quantum Safe C lib | Experimental; liboqs itself warns against production reliance |
 | **`aws-lc-rs`** | ML-KEM, ML-DSA | Bindings to AWS libcrypto, FIPS pending | Viable if FIPS compliance is required |
 | **`rust-openssl`** | ML-KEM/ML-DSA via OpenSSL 3.5 | Bindings still catching up | For TLS termination integrations |
@@ -223,7 +223,7 @@ Nivrit currently signs JWTs with HMAC-SHA256. HMAC is fine for short-lived token
 
 - **Ed25519 + ML-DSA-65** composite signatures.
 - Store the algorithm identifier with each signature.
-- Use SLH-DSA-128f or SLH-DSA-128s only where signature size is acceptable and maximum conservatism is required (e.g., root-of-trust documents).
+- Revisit SLH-DSA only when a maintained implementation meets the project's audit requirements and its large signatures are operationally acceptable.
 
 ### 6.7 Crypto agility and versioning
 
@@ -318,7 +318,7 @@ Quantum-ready cryptography does not replace access control. Nivrit should:
 3. **Password hashing needs tuning now:** Argon2id with explicit parameters and Argon2id-based KDFs are more urgent than post-quantum password hashes.
 4. **Use crypto agility:** Version every ciphertext, hash, and signature so Nivrit can migrate algorithms without breaking existing data.
 5. **Start with the network layer:** Enabling PQC TLS at the proxy is the fastest way to defeat HNDL for data in transit.
-6. **Plan for PQC signatures later:** JWT HMAC is fine today; add ML-DSA/SLH-DSA only when long-term non-repudiation or compliance requires it.
+6. **Use PQC signatures deliberately:** JWT HMAC is fine today; ML-DSA covers application audit signing, and SLH-DSA remains deferred pending a maintained implementation.
 
 ---
 

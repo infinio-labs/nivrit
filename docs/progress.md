@@ -72,8 +72,8 @@ This document captures the implementation progress across all roadmap phases, te
 
 | Item | Status | Notes |
 |------|--------|-------|
-| ML-DSA/SLH-DSA concrete signers | ✅ Done | `nivrit-crypto/src/signatures.rs` implements ML-DSA-65/87 and SLH-DSA-SHA2-128s/256s behind the `pq-signatures` feature. |
-| Stable SLH-DSA crate | ✅ Done | Replaced nightly-only `pqc_sphincsplus` with stable `pqcrypto-sphincsplus` (PQClean bindings). |
+| ML-DSA concrete signers | ✅ Done | `nivrit-crypto/src/signatures.rs` implements ML-DSA-65/87 behind the `pq-signatures` feature. |
+| SLH-DSA backend | ⏸️ Deferred | Removed the unmaintained PQClean backend; revisit when a maintained implementation meets the project's audit requirements. |
 | Signer/Verifier trait boundary | ✅ Done | `Signer`/`Verifier` traits support algorithm metadata, signing, public-key export, and verification. |
 | HSM/KMS-backed KEKs | ✅ Done | Async `KekBackend` trait with `LocalKek` (AES-256-GCM), `AwsKmsKek` (`kek-aws` feature), and `AzureKeyVaultKek` (`kek-azure` feature). |
 
@@ -87,7 +87,7 @@ This document captures the implementation progress across all roadmap phases, te
 |-------|--------------|----------|
 | `nivrit-core` | `src/error.rs`, `src/models.rs` | Error variants, role parsing. |
 | `nivrit-auth` | `src/jwt.rs`, `src/password.rs` | JWT signing/validation, Argon2 password hashing. |
-| `nivrit-crypto` | `src/e2ee.rs`, `src/hybrid.rs`, `src/keys.rs`, `src/password.rs`, `src/signatures.rs`, `src/kek.rs`, `src/suite.rs` | Suite roundtrips, hybrid KEM + re-encryption, key generation, Argon2 derivation, ML-DSA/SLH-DSA sign/verify roundtrips, local KEK wrap/unwrap, AWS KMS and Azure Key Vault backend compilation. |
+| `nivrit-crypto` | `src/e2ee.rs`, `src/hybrid.rs`, `src/keys.rs`, `src/password.rs`, `src/signatures.rs`, `src/kek.rs`, `src/suite.rs` | Suite roundtrips, hybrid KEM + re-encryption, key generation, Argon2 derivation, ML-DSA sign/verify roundtrips, local KEK wrap/unwrap, AWS KMS and Azure Key Vault backend compilation. |
 | `nivrit-api` | `src/error.rs`, `src/handlers/authz.rs`, `src/handlers/orgs.rs`, `src/handlers/projects.rs`, `src/handlers/secrets.rs`, `src/handlers/audit.rs`, `src/signing.rs`, `src/tls.rs` | Error mapping, authz role checks, org/project/secret/audit handler edge cases, ML-DSA audit-log signing/verification, TLS configuration. |
 | `nivrit-db` | `tests/integration_tests.rs` | Live Postgres tests for user/org/project/env/secret/version/audit-log CRUD and conflict handling. |
 | `nivrit-cli` | `src/main.rs` | Private-key encrypt/decrypt, self-encapsulated project-key roundtrip. |
@@ -180,7 +180,7 @@ All commands currently pass.
 ## 5. Remaining Work & Known Gaps
 
 1. **Rate-limiter scaling:** Login rate limiting is in-memory and single-instance; replace with a distributed backend when scaling horizontally.
-2. **JWT/TLS certificate PQ signatures:** ML-DSA/SLH-DSA are wired into application-level audit-log signing. Replacing HMAC JWT or X.509 TLS certs with PQ signatures is deferred until standards/browser support matures.
+2. **JWT/TLS certificate PQ signatures:** ML-DSA is wired into application-level audit-log signing. SLH-DSA and replacing HMAC JWT or X.509 TLS certs with PQ signatures are deferred until a maintained implementation and ecosystem support mature.
 3. **Operational docs for cloud KEKs:** Add example IAM/RBAC policies and Terraform snippets for AWS KMS and Azure Key Vault KEKs.
 
 ---
