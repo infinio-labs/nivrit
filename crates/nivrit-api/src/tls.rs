@@ -1,10 +1,8 @@
-use std::fs::File;
-use std::io::BufReader;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rustls::{
-    pki_types::{CertificateDer, PrivateKeyDer},
+    pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer},
     ServerConfig,
 };
 
@@ -31,26 +29,14 @@ pub fn build_tls_config(cert_path: &str, key_path: &str) -> Result<Arc<ServerCon
 }
 
 fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
-    let file = File::open(path).with_context(|| format!("opening TLS cert: {path}"))?;
-    let mut reader = BufReader::new(file);
-    rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()
+    CertificateDer::pem_file_iter(path)
+        .with_context(|| format!("opening TLS cert: {path}"))?
+        .collect::<std::result::Result<Vec<_>, _>>()
         .with_context(|| format!("parsing TLS cert: {path}"))
 }
 
 fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>> {
-    let file = File::open(path).with_context(|| format!("opening TLS key: {path}"))?;
-    let mut reader = BufReader::new(file);
-    let item = rustls_pemfile::read_one(&mut reader)
-        .with_context(|| format!("reading TLS key: {path}"))?
-        .context("TLS key file is empty")?;
-
-    match item {
-        rustls_pemfile::Item::Pkcs1Key(key) => Ok(key.into()),
-        rustls_pemfile::Item::Pkcs8Key(key) => Ok(key.into()),
-        rustls_pemfile::Item::Sec1Key(key) => Ok(key.into()),
-        _ => anyhow::bail!("unsupported TLS key format in {path}"),
-    }
+    PrivateKeyDer::from_pem_file(path).with_context(|| format!("reading TLS key: {path}"))
 }
 
 #[cfg(test)]

@@ -49,7 +49,7 @@ uuid = { version = "1.23.3", features = ["v4", "serde"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 
 # Errors
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 thiserror = "2.0.18"
 
 # Logging
@@ -62,7 +62,7 @@ reqwest = { version = "0.13.4", features = ["json"] }
 regex = "1.12.4"
 
 # Auth
-jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.0.0", default-features = false, features = ["aws_lc_rs"] }
 argon2 = "0.5.3"
 
 # Crypto
@@ -77,9 +77,6 @@ x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 # Config
 figment = { version = "0.10.19", features = ["env", "toml"] }
 dotenvy = "0.15.7"
-
-# Validation
-validator = { version = "0.20.0", features = ["derive"] }
 
 [profile.release]
 opt-level = 3
