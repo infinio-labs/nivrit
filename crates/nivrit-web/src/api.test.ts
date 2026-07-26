@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, vi, test } from 'vitest';
-import { getSecret, login, setSecret } from './api';
+import { SessionExpiredError, getSecret, login, setSecret } from './api';
 
 describe('login', () => {
   let originalFetch: typeof globalThis.fetch;
@@ -31,9 +31,40 @@ describe('login', () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
-  test('throws on non-ok response', async () => {
+  // 401 is the one status the UI must react to structurally rather than by
+  // showing a message: the stored session is gone, so it signs the user out.
+  test('maps 401 to SessionExpiredError', async () => {
     globalThis.fetch = vi.fn(() =>
       Promise.resolve(new Response('unauthorized', { status: 401 }))
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(login('a@b.com', 'password')).rejects.toBeInstanceOf(SessionExpiredError);
+  });
+
+  test('surfaces the server error message rather than a generic string', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'auth_hash must be 32 bytes' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(login('a@b.com', 'password')).rejects.toThrow('auth_hash must be 32 bytes');
+  });
+
+  test('explains a 403 from the rate limiter', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response('', { status: 403 }))
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(login('a@b.com', 'password')).rejects.toThrow(/too many attempts/i);
+  });
+
+  test('falls back to the generic message when the body is not JSON', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response('<html>502 Bad Gateway</html>', { status: 502 }))
     ) as unknown as typeof globalThis.fetch;
 
     await expect(login('a@b.com', 'password')).rejects.toThrow('login failed');

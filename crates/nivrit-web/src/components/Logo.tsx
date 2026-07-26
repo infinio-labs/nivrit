@@ -1,4 +1,4 @@
-import { Shield } from 'lucide-react';
+import { Shield } from './icons';
 
 export function Logo({
   size = 'md',

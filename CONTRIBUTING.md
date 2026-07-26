@@ -81,6 +81,21 @@ Use clear, descriptive commit messages. Prefer the present tense and explain the
 4. Update `CHANGELOG.md` under the `Unreleased` section if your change is user-facing.
 5. Open a pull request against `main` and fill out the PR template.
 
+## Architecture decisions
+
+Some of Nivrit's design choices look like omissions until you know why they were
+made — there is no SSR framework, the SDKs shell out to a subprocess instead of
+using native bindings, and the server deliberately cannot enforce password
+policy. These are recorded in [`docs/adr/`](./docs/adr/).
+
+Please read the relevant record before proposing a change in those areas. If you
+disagree with one, that is a fine conversation to have — open an issue arguing
+against the decision rather than a pull request that quietly reverses it, since
+several of them are load-bearing for the security model.
+
+New decisions of the same kind (particularly ones where the *reasoning* would not
+survive in the code) should come with a new record.
+
 ## Security
 
 Please do not open public issues for security vulnerabilities. See

@@ -1,5 +1,9 @@
 # Nivrit Architecture
 
+> Decisions whose rationale is not recoverable from the code — why there is no
+> SSR framework, why the master password is never transmitted, why the KEM is
+> hybrid rather than pure post-quantum — are recorded in [`adr/`](adr/).
+
 ## Overview
 
 Nivrit is a secret management platform with **client-side end-to-end encryption (E2EE)**. The server stores only ciphertext; plaintext secrets are never visible to the backend.

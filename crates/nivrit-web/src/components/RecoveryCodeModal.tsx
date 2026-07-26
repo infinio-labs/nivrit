@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Check, Copy } from 'lucide-react';
+import { AlertTriangle, Check, Copy } from './icons';
 import { Button, Card } from './ui';
 
 export function RecoveryCodeModal({ code, onClose }: { code: string; onClose: () => void }) {

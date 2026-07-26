@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, Loader2, Mail, Shield } from 'lucide-react';
+import { KeyRound, Loader2, Mail, Shield } from './components/icons';
 import { initCrypto } from './crypto';
 import { oauthAuthorizeUrl } from './api';
 import {

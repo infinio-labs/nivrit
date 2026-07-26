@@ -10,7 +10,7 @@ import {
   Plus,
   Trash2,
   X,
-} from 'lucide-react';
+} from './icons';
 import {
   Badge,
   Button,

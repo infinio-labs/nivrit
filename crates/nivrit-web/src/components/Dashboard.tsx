@@ -7,7 +7,7 @@ import {
   Shield,
   Users,
   X,
-} from 'lucide-react';
+} from './icons';
 import { Logo } from './Logo';
 import { Button, Separator } from './ui';
 import { ContextSelect } from './ContextSelect';

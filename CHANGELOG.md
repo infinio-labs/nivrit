@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Architecture Decision Records in `docs/adr/`, covering the decisions whose
+  rationale is not recoverable from the code: no SSR, split-derivation auth, the
+  minimal frontend runtime, the crypto-helper subprocess, hybrid post-quantum
+  crypto, and AGPL.
 - `cargo deny` in CI for licence compatibility, yanked crates, and sources.
 - Pagination on `list_secrets` and `list_secret_versions`.
 - Known-answer tests pinning credential derivation, plus verification that the
@@ -62,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   password. Pre-1.0 installs must re-register.
 - Recovery keys use 64 MiB / t=3 Argon2id and a per-user salt, replacing
   `Argon2::default()` with one global salt shared by every user.
+- Cut the web client's runtime dependency closure from 44 packages to 4. The
+  browser page holds decrypted keys, so every package executing in it is part of
+  the trusted computing base. Removed `@headlessui/react` (declared but never
+  imported, and pulling ~20 transitive packages), moved Tailwind to
+  `devDependencies` where it belongs, and inlined the 25 icons used from
+  `lucide-react`.
+- API client errors now carry the server's message instead of a fixed string, and
+  a 401 raises `SessionExpiredError` so the UI can sign the user out rather than
+  showing a generic failure.
 - The API container runs as an unprivileged user.
 - Release builds use `codegen-units = 1` and strip symbols for smaller binaries.
 

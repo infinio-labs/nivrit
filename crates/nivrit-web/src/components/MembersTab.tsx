@@ -1,4 +1,4 @@
-import { Mail, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { Mail, ShieldCheck, UserPlus, Users } from './icons';
 import { Button, Card, CardHeader, EmptyState, Input, Label, Select } from './ui';
 
 interface MembersTabProps {

@@ -104,7 +104,8 @@ For a production-oriented sample, see [`deploy/docker-compose.yml`](deploy/docke
 
 ## Architecture
 
-See [`docs/architecture.md`](docs/architecture.md) for the E2EE design and threat model.
+See [`docs/architecture.md`](docs/architecture.md) for the E2EE design and threat model,
+and [`docs/adr/`](docs/adr/) for the reasoning behind the load-bearing design decisions.
 Planned work and the release plan are tracked in
 [GitHub milestones](https://github.com/infinio-labs/nivrit/milestones).
 

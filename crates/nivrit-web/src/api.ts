@@ -3,6 +3,36 @@ const API_URL =
   (typeof import.meta.env !== 'undefined' && import.meta.env.VITE_API_URL) ||
   'http://localhost:4000';
 
+/** Raised when the server rejects the session; the UI signs the user out. */
+export class SessionExpiredError extends Error {
+  constructor() {
+    super('Your session has expired. Please sign in again.');
+    this.name = 'SessionExpiredError';
+  }
+}
+
+/**
+ * Turn a failed response into an Error carrying the server's message.
+ *
+ * Every call site used to throw a fixed string like 'set secret failed', which
+ * meant a user hitting a validation rule or a rate limit saw the same opaque
+ * text as someone hitting a network fault.
+ */
+async function failure(res: Response, fallback: string): Promise<Error> {
+  if (res.status === 401) return new SessionExpiredError();
+  let detail = '';
+  try {
+    const body = await res.json();
+    if (body && typeof body.error === 'string') detail = body.error;
+  } catch {
+    // Non-JSON body (proxy error page, empty 502); fall back to the generic text.
+  }
+  if (res.status === 403 && !detail) {
+    detail = 'Too many attempts. Please wait a few minutes and try again.';
+  }
+  return new Error(detail || fallback);
+}
+
 export interface LoginResponse {
   token: string;
   user: {
@@ -44,7 +74,7 @@ export async function login(email: string, authHash: string): Promise<LoginResul
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, auth_hash: authHash }),
   });
-  if (!res.ok) throw new Error('login failed');
+  if (!res.ok) throw await failure(res, 'login failed');
   return res.json();
 }
 
@@ -54,7 +84,7 @@ export async function loginTotp(tempToken: string, code: string): Promise<LoginR
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ temp_token: tempToken, code }),
   });
-  if (!res.ok) throw new Error('TOTP login failed');
+  if (!res.ok) throw await failure(res, 'TOTP login failed');
   return res.json();
 }
 
@@ -64,7 +94,7 @@ export async function register(body: RegisterRequest): Promise<RegisterResponse>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error('registration failed');
+  if (!res.ok) throw await failure(res, 'registration failed');
   return res.json();
 }
 
@@ -104,7 +134,7 @@ export async function resetPasswordBegin(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, recovery_auth_hash: recoveryAuthHash }),
   });
-  if (!res.ok) throw new Error('invalid reset token or recovery code');
+  if (!res.ok) throw await failure(res, 'invalid reset token or recovery code');
   return res.json();
 }
 
@@ -124,7 +154,7 @@ export async function resetPassword(body: ResetPasswordRequest): Promise<LoginRe
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error('reset failed');
+  if (!res.ok) throw await failure(res, 'reset failed');
   return res.json();
 }
 
@@ -136,7 +166,7 @@ export async function oauthAuthorizeUrl(provider: 'google' | 'github'): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider }),
   });
-  if (!res.ok) throw new Error('oauth authorize failed');
+  if (!res.ok) throw await failure(res, 'oauth authorize failed');
   return res.json();
 }
 
@@ -162,7 +192,7 @@ export async function oauthCallback(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, code, state }),
   });
-  if (!res.ok) throw new Error('oauth callback failed');
+  if (!res.ok) throw await failure(res, 'oauth callback failed');
   return res.json();
 }
 
@@ -187,7 +217,7 @@ export async function oauthSetup(body: OAuthSetupRequest): Promise<RegisterRespo
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error('oauth setup failed');
+  if (!res.ok) throw await failure(res, 'oauth setup failed');
   return res.json();
 }
 
@@ -206,7 +236,7 @@ export async function setupTotp(token: string, authHash?: string): Promise<TotpS
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ auth_hash: authHash ?? null }),
   });
-  if (!res.ok) throw new Error('totp setup failed');
+  if (!res.ok) throw await failure(res, 'totp setup failed');
   return res.json();
 }
 
@@ -216,7 +246,7 @@ export async function verifyTotp(token: string, code: string): Promise<{ enabled
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ code }),
   });
-  if (!res.ok) throw new Error('totp verify failed');
+  if (!res.ok) throw await failure(res, 'totp verify failed');
   return res.json();
 }
 
@@ -230,7 +260,7 @@ export async function disableTotp(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ auth_hash: authHash, code }),
   });
-  if (!res.ok) throw new Error('totp disable failed');
+  if (!res.ok) throw await failure(res, 'totp disable failed');
   return res.json();
 }
 
@@ -358,7 +388,7 @@ export async function setSecret(
     },
     body: JSON.stringify({ environment_id: environmentId, key, encrypted_value: ciphertext, nonce }),
   });
-  if (!res.ok) throw new Error('set secret failed');
+  if (!res.ok) throw await failure(res, 'set secret failed');
 }
 
 export async function getSecret(
@@ -368,10 +398,10 @@ export async function getSecret(
   key: string
 ): Promise<{ encrypted_value: string; nonce: string }> {
   const res = await fetch(
-    `${API_URL}/projects/${projectId}/secrets/${key}?environment_id=${environmentId}`,
+    `${API_URL}/projects/${projectId}/secrets/${encodeURIComponent(key)}?environment_id=${environmentId}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
-  if (!res.ok) throw new Error('get secret failed');
+  if (!res.ok) throw await failure(res, 'get secret failed');
   return res.json();
 }
 
@@ -396,7 +426,7 @@ export async function listSecrets(
     `${API_URL}/projects/${projectId}/secrets?environment_id=${environmentId}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
-  if (!res.ok) throw new Error('list secrets failed');
+  if (!res.ok) throw await failure(res, 'list secrets failed');
   return res.json();
 }
 
@@ -407,13 +437,13 @@ export async function deleteSecret(
   key: string
 ): Promise<void> {
   const res = await fetch(
-    `${API_URL}/projects/${projectId}/secrets/${key}?environment_id=${environmentId}`,
+    `${API_URL}/projects/${projectId}/secrets/${encodeURIComponent(key)}?environment_id=${environmentId}`,
     {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     }
   );
-  if (!res.ok) throw new Error('delete secret failed');
+  if (!res.ok) throw await failure(res, 'delete secret failed');
 }
 
 export interface Environment {
@@ -454,4 +484,142 @@ export async function inviteMember(
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error('invite failed');
+}
+
+
+// Personal access tokens
+//
+// Required for the CLI, the SDKs, and the VS Code extension: an account created
+// in the browser has no other way to obtain a credential for them.
+
+export interface PatMetadata {
+  id: string;
+  name: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface CreatedPat extends PatMetadata {
+  /** Returned exactly once, at creation. */
+  token: string;
+}
+
+export async function listPats(token: string): Promise<PatMetadata[]> {
+  const res = await fetch(`${API_URL}/auth/pats`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await failure(res, 'could not list access tokens');
+  return res.json();
+}
+
+export async function createPat(
+  token: string,
+  name: string,
+  expiresInDays?: number
+): Promise<CreatedPat> {
+  const res = await fetch(`${API_URL}/auth/pat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name, expires_in_days: expiresInDays ?? null }),
+  });
+  if (!res.ok) throw await failure(res, 'could not create access token');
+  return res.json();
+}
+
+export async function revokePat(token: string, tokenId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/auth/pats/${tokenId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await failure(res, 'could not revoke access token');
+}
+
+// Secret version history
+
+export interface SecretVersion {
+  version: number;
+  encrypted_value: string;
+  nonce: string;
+  algorithm: string;
+  created_at: string;
+}
+
+export async function listSecretVersions(
+  token: string,
+  projectId: string,
+  environmentId: string,
+  key: string
+): Promise<SecretVersion[]> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/secrets/${encodeURIComponent(key)}/versions?environment_id=${environmentId}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw await failure(res, 'could not load version history');
+  return res.json();
+}
+
+export async function restoreSecretVersion(
+  token: string,
+  projectId: string,
+  environmentId: string,
+  key: string,
+  version: number
+): Promise<void> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/secrets/${encodeURIComponent(key)}/restore`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ environment_id: environmentId, version }),
+    }
+  );
+  if (!res.ok) throw await failure(res, 'could not restore that version');
+}
+
+// Audit log
+
+export interface AuditLogEntry {
+  id: string;
+  project_id: string;
+  environment_id: string | null;
+  secret_id: string | null;
+  user_id: string;
+  action: string;
+  key: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+  /** Present when the server was configured with an ML-DSA-65 signing seed. */
+  signature_algorithm: string | null;
+  signature: string | null;
+  signing_public_key: string | null;
+}
+
+/** Requires the Admin role on the project; the API returns 403 otherwise. */
+export async function listAuditLogs(
+  token: string,
+  projectId: string,
+  limit = 100
+): Promise<AuditLogEntry[]> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/audit-logs?limit=${limit}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw await failure(res, 'could not load the audit log');
+  return res.json();
+}
+
+export async function verifyAuditLog(
+  token: string,
+  projectId: string,
+  logId: string
+): Promise<{ valid: boolean; reason: string | null }> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/audit-logs/${logId}/verify`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw await failure(res, 'could not verify that entry');
+  return res.json();
 }
