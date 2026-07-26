@@ -1,0 +1,19 @@
+{
+  "name": "nivrit-web-crypto",
+  "collaborators": [
+    "Nivrit Contributors"
+  ],
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/infiniolabs/nivrit"
+  },
+  "files": [
+    "nivrit_web_crypto_bg.wasm",
+    "nivrit_web_crypto.js",
+    "nivrit_web_crypto.d.ts"
+  ],
+  "main": "nivrit_web_crypto.js",
+  "types": "nivrit_web_crypto.d.ts"
+}
