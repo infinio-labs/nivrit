@@ -52,7 +52,8 @@ Nivrit is a secret management platform with **client-side end-to-end encryption 
 > **Assurance status.** Nivrit's crypto core is designed for zero-knowledge + post-quantum
 > guarantees, but as of the initial open-source release it has **not yet had an independent
 > third-party audit**. Treat it as **pre-audit**: safe to evaluate and self-host, but do
-> not store production secrets until an audit is completed (tracked in [ROADMAP.md](ROADMAP.md)).
+> not store production secrets until an audit is completed (tracked in
+> [GitHub milestones](https://github.com/infinio-labs/nivrit/milestones)).
 > The design below is what we claim; the audit is what proves it.
 
 ### What the server can and cannot see

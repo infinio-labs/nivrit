@@ -21,6 +21,19 @@ use chrono::{DateTime, SubsecRound, Utc};
 
 type ApiResult<T> = std::result::Result<T, ApiError>;
 
+/// Page size when a caller does not ask for one.
+const DEFAULT_PAGE_LIMIT: i64 = 100;
+/// Server-enforced ceiling. A caller asking for more gets this instead, so one
+/// request can never pull an unbounded result set into memory.
+const MAX_PAGE_LIMIT: i64 = 1000;
+
+/// Clamp caller-supplied paging into a range the server is willing to serve.
+fn page(limit: Option<i64>, offset: Option<i64>) -> (i64, i64) {
+    let limit = limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, MAX_PAGE_LIMIT);
+    let offset = offset.unwrap_or(0).max(0);
+    (limit, offset)
+}
+
 fn default_algorithm() -> String {
     "aes256gcm-v1".into()
 }
@@ -146,12 +159,16 @@ pub async fn create_secret(
 pub struct GetSecretQuery {
     pub environment_id: Uuid,
     pub folder_id: Option<Uuid>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ListSecretsQuery {
     pub environment_id: Option<Uuid>,
     pub folder_id: Option<Uuid>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 pub async fn list_secrets(
@@ -164,8 +181,16 @@ pub async fn list_secrets(
 ) -> ApiResult<Json<Vec<SecretResponse>>> {
     require_project_member(&state.db, project_id, user.id).await?;
 
-    let rows =
-        queries::list_secrets(&state.db, project_id, query.environment_id, query.folder_id).await?;
+    let (limit, offset) = page(query.limit, query.offset);
+    let rows = queries::list_secrets(
+        &state.db,
+        project_id,
+        query.environment_id,
+        query.folder_id,
+        limit,
+        offset,
+    )
+    .await?;
 
     let user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok());
     let created_at = Utc::now().trunc_subsecs(6);
@@ -295,7 +320,8 @@ pub async fn list_secret_versions(
     )
     .await?;
 
-    let versions = queries::list_secret_versions(&state.db, secret.id).await?;
+    let (limit, offset) = page(query.limit, query.offset);
+    let versions = queries::list_secret_versions(&state.db, secret.id, limit, offset).await?;
 
     Ok(Json(
         versions

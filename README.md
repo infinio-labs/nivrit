@@ -1,9 +1,9 @@
 # Nivrit
 
-[![CI](https://github.com/infiniolabs/nivrit/actions/workflows/ci.yml/badge.svg)](https://github.com/infiniolabs/nivrit/actions/workflows/ci.yml)
-[![cargo audit](https://github.com/infiniolabs/nivrit/actions/workflows/ci.yml/badge.svg?event=schedule)](https://github.com/infiniolabs/nivrit/actions/workflows/ci.yml)
+[![CI](https://github.com/infinio-labs/nivrit/actions/workflows/ci.yml/badge.svg)](https://github.com/infinio-labs/nivrit/actions/workflows/ci.yml)
+[![cargo audit](https://github.com/infinio-labs/nivrit/actions/workflows/ci.yml/badge.svg?event=schedule)](https://github.com/infinio-labs/nivrit/actions/workflows/ci.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![GitHub release](https://img.shields.io/github/v/release/infiniolabs/nivrit?logo=github)](https://github.com/infiniolabs/nivrit/releases/latest)
+[![GitHub release](https://img.shields.io/github/v/release/infinio-labs/nivrit?logo=github)](https://github.com/infinio-labs/nivrit/releases/latest)
 
 A Rust-based secret management platform with client-side end-to-end encryption,
 post-quantum hybrid key exchange, and post-quantum audit-log signatures.
@@ -18,7 +18,7 @@ and set/get client-side encrypted secrets end-to-end.
 > the first public release centers on the **web UI, CLI, API, and the Node.js SDK**.
 > The VS Code extension and the non-Node SDKs (Python, Go, Rust, .NET, Java, Ruby,
 > Elixir) are **experimental / community-contributed** and not yet part of the
-> supported surface — see [ROADMAP.md](ROADMAP.md).
+> supported surface.
 
 ## How Nivrit differs from Infisical
 
@@ -94,7 +94,7 @@ For a production-oriented sample, see [`deploy/docker-compose.yml`](deploy/docke
 - `crates/nivrit-crypto-helper` — standalone crypto binary for SDKs
 - `sdks/node` — Node.js SDK (supported)
 
-**Experimental / community-contributed (not yet supported — see [ROADMAP.md](ROADMAP.md)):**
+**Experimental / community-contributed (not yet supported):**
 
 - `extensions/vscode` — VS Code extension
 - `sdks/` — Python, Go, Rust, .NET, Java, Ruby, Elixir SDKs
@@ -102,7 +102,8 @@ For a production-oriented sample, see [`deploy/docker-compose.yml`](deploy/docke
 ## Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) for the E2EE design and threat model.
-See [`ROADMAP.md`](ROADMAP.md) for scope and the release plan.
+Planned work and the release plan are tracked in
+[GitHub milestones](https://github.com/infinio-labs/nivrit/milestones).
 
 ## Contributing
 

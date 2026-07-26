@@ -28,6 +28,15 @@ pub struct Config {
     pub tls_key_path: Option<String>,
     /// Allowed CORS origin. If omitted, CORS allows any origin (development only).
     pub cors_origin: Option<String>,
+    /// Set when the API sits behind a reverse proxy you control (the bundled
+    /// nginx, a load balancer). Rate limiting then keys on the last
+    /// `X-Forwarded-For` hop instead of the socket peer, which would otherwise
+    /// be the proxy for every request and collapse all users into one bucket.
+    ///
+    /// Off by default: honouring a client-supplied header on a directly exposed
+    /// server would let any caller forge their way past the limiter.
+    #[serde(default)]
+    pub trusted_proxy: bool,
     /// Base64-encoded 32-byte seed for the ML-DSA-65 audit-log signing key.
     /// If omitted, audit-log signatures are disabled.
     pub signing_key_seed: Option<String>,
@@ -52,9 +61,6 @@ pub struct Config {
 
     // TOTP secret encryption
     pub totp_encryption_key: Option<String>,
-
-    // Optional pepper added to recovery-code hashing/derivation.
-    pub recovery_code_pepper: Option<String>,
 }
 
 impl Config {
@@ -144,6 +150,7 @@ mod tests {
             tls_cert_path: None,
             tls_key_path: None,
             cors_origin: None,
+            trusted_proxy: false,
             signing_key_seed: None,
             google_client_id: None,
             google_client_secret: None,
@@ -157,7 +164,6 @@ mod tests {
             smtp_pass: None,
             smtp_from: None,
             totp_encryption_key: None,
-            recovery_code_pepper: None,
         }
     }
 

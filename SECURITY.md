@@ -8,7 +8,7 @@ vulnerabilities seriously and appreciate responsible disclosure.
 **Do not open a public GitHub issue for security vulnerabilities.**
 
 Report privately through GitHub Security Advisories —
-[Report a vulnerability](https://github.com/infiniolabs/nivrit/security/advisories/new).
+[Report a vulnerability](https://github.com/infinio-labs/nivrit/security/advisories/new).
 
 Please include:
 

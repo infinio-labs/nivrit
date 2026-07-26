@@ -15,7 +15,6 @@ pub struct AppState {
     pub signature_service: Option<SignatureService>,
     pub email_config: EmailConfig,
     pub totp_encryption_key: Option<[u8; 32]>,
-    pub recovery_code_pepper: Option<String>,
     /// Shared client for outbound OAuth calls. Has connect/request timeouts so a
     /// hung provider can't pin a request worker indefinitely.
     pub http_client: reqwest::Client,
@@ -72,7 +71,6 @@ impl AppState {
             signature_service,
             email_config,
             totp_encryption_key,
-            recovery_code_pepper: config.recovery_code_pepper.clone(),
             http_client,
             config: config.clone(),
         })

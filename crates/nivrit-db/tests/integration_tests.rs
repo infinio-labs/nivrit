@@ -169,7 +169,7 @@ async fn project_membership_and_secret_crud() {
         .expect("get_secret failed");
     assert_eq!(fetched.id, secret.id);
 
-    let list = queries::list_secrets(&pool, project_id, Some(env_id), None)
+    let list = queries::list_secrets(&pool, project_id, Some(env_id), None, 100, 0)
         .await
         .expect("list_secrets failed");
     assert_eq!(list.len(), 1);

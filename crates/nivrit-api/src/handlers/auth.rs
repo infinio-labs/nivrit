@@ -1,13 +1,11 @@
 use axum::{
     extract::{ConnectInfo, State},
+    http::HeaderMap,
     Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{Duration, Utc};
-use nivrit_auth::{
-    decrypt_private_key_with_password, encrypt_private_key_with_password, hash_password,
-    send_password_reset, verify_password,
-};
+use nivrit_auth::send_password_reset;
 use nivrit_core::NivritError;
 use nivrit_db::queries;
 use rand::TryRng;
@@ -16,36 +14,62 @@ use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 use std::sync::LazyLock;
 
-use crate::{error::ApiError, state::AppState};
+use crate::{
+    cpu::{hash_credential, verify_credential},
+    error::ApiError,
+    state::AppState,
+};
 
 type ApiResult<T> = std::result::Result<T, ApiError>;
+
+/// Length of an Argon2id-derived client credential.
+const CREDENTIAL_LEN: usize = 32;
+/// AES-256-GCM nonce length used for the stored TOTP blob.
+const TOTP_NONCE_LEN: usize = 12;
+/// AES-256-GCM authentication tag length.
+const AES_GCM_TAG_LEN: usize = 16;
 
 fn default_private_key_algorithm() -> String {
     "aes256gcm-v1".into()
 }
 
 /// A real Argon2 hash used to equalize login timing on the account-missing and
-/// password-less (OAuth-only) paths, so response time can't reveal whether an
+/// credential-less (OAuth-only) paths, so response time can't reveal whether an
 /// account exists. Computed once.
 static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
-    hash_password("nivrit-timing-equalization-dummy-password")
-        .expect("dummy password hash must compute")
+    nivrit_auth::hash_password("nivrit-timing-equalization-dummy-credential")
+        .expect("dummy credential hash must compute")
 });
 
 fn dummy_hash() -> &'static str {
     DUMMY_PASSWORD_HASH.as_str()
 }
 
+/// Registration payload.
+///
+/// Note that there is no `password` field. The client derives everything below
+/// locally (see `nivrit_web_crypto::generate_registration_material`): the server
+/// receives an opaque `auth_hash`, an opaque `recovery_auth_hash`, and
+/// ciphertext it cannot open. The master password and the recovery code never
+/// leave the client, so a hostile or compromised server has nothing to capture.
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
     pub email: String,
-    pub password: String,
+    /// Base64 `Argon2id(password, salt=H(email))`. Opaque credential.
+    pub auth_hash: String,
     pub name: Option<String>,
     pub public_key: String,
     pub encrypted_private_key: String,
     pub private_key_nonce: String,
     #[serde(default = "default_private_key_algorithm")]
     pub private_key_algorithm: String,
+    /// Base64 `Argon2id(recovery_code, salt=H(email))`. Opaque credential.
+    pub recovery_auth_hash: String,
+    /// The private key, wrapped under the client-derived recovery key.
+    pub encrypted_private_key_recovery: String,
+    pub private_key_recovery_nonce: String,
+    #[serde(default = "default_private_key_algorithm")]
+    pub private_key_recovery_algorithm: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,11 +78,13 @@ pub struct AuthResponse {
     pub user: UserResponse,
 }
 
+/// Registration succeeds with an ordinary auth response. The recovery code is
+/// *not* returned: the client generated it and is responsible for showing it to
+/// the user exactly once. The server never saw it.
 #[derive(Debug, Serialize)]
 pub struct RegisterResponse {
     pub token: String,
     pub user: UserResponse,
-    pub recovery_code: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,7 +101,8 @@ pub struct UserResponse {
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub email: String,
-    pub password: String,
+    /// Base64 client-derived authentication hash. See [`RegisterRequest`].
+    pub auth_hash: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,42 +124,45 @@ pub struct MfaLoginRequest {
 
 pub async fn register(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<RegisterRequest>,
 ) -> ApiResult<Json<RegisterResponse>> {
-    if req.email.is_empty() || req.password.len() < 8 {
-        return Err(NivritError::Validation(
-            "email required and password must be at least 8 characters".into(),
-        )
-        .into());
+    // Registration is unauthenticated and each call costs a 64 MiB Argon2id
+    // hash, so it is throttled per source IP like login is. Without this an
+    // anonymous caller can exhaust server memory with a loop.
+    let rate_key = format!("register|{}", client_ip(&state, &headers, &addr));
+    if !state.login_rate_limiter.allow(&rate_key).await? {
+        return Err(NivritError::Forbidden.into());
+    }
+    state.login_rate_limiter.record_attempt(&rate_key).await?;
+
+    if req.email.trim().is_empty() {
+        return Err(NivritError::Validation("email required".into()).into());
     }
 
-    let password_hash = hash_password(&req.password)?;
+    // The credential is a fixed-width derived hash, not a password, so the
+    // length rule that used to enforce password strength now lives on the
+    // client. What the server checks is that this really is a 32-byte hash.
+    let auth_hash = decode_credential(&req.auth_hash, "auth_hash")?;
+    let recovery_auth_hash = decode_credential(&req.recovery_auth_hash, "recovery_auth_hash")?;
 
     let public_key = decode_b64(&req.public_key, "public_key")?;
     let encrypted_private_key = decode_b64(&req.encrypted_private_key, "encrypted_private_key")?;
     let private_key_nonce = decode_b64(&req.private_key_nonce, "private_key_nonce")?;
-
-    // Decrypt the password-encrypted private key so we can also encrypt it with
-    // the recovery key. The server only does this at registration time; the
-    // recovery code itself is never stored.
-    let plaintext_private_key = decrypt_private_key_with_password(
-        &encrypted_private_key,
-        &private_key_nonce,
-        &req.password,
-    )
-    .map_err(|_| NivritError::Validation("invalid encrypted private key".into()))?;
-
-    let recovery_code = nivrit_auth::recovery::generate_recovery_code();
-    let recovery_key = nivrit_auth::recovery::derive_recovery_key(
-        &recovery_code,
-        state.recovery_code_pepper.as_deref(),
+    let encrypted_private_key_recovery = decode_b64(
+        &req.encrypted_private_key_recovery,
+        "encrypted_private_key_recovery",
     )?;
-    let recovery_code_hash = nivrit_auth::recovery::hash_recovery_code(
-        &recovery_code,
-        state.recovery_code_pepper.as_deref(),
+    let private_key_recovery_nonce = decode_b64(
+        &req.private_key_recovery_nonce,
+        "private_key_recovery_nonce",
     )?;
-    let (encrypted_private_key_recovery, private_key_recovery_nonce) =
-        nivrit_auth::recovery::encrypt_with_key(&plaintext_private_key, &recovery_key)?;
+
+    // Both credentials are stored as Argon2id hashes so that a database leak
+    // yields nothing replayable.
+    let password_hash = hash_credential(auth_hash).await?;
+    let recovery_code_hash = hash_credential(recovery_auth_hash).await?;
 
     let row = queries::create_user_with_recovery(
         &state.db,
@@ -146,7 +176,7 @@ pub async fn register(
         Some(&recovery_code_hash),
         Some(&encrypted_private_key_recovery),
         Some(&private_key_recovery_nonce),
-        Some("aes256gcm-v1"),
+        Some(&req.private_key_recovery_algorithm),
         None,
     )
     .await?;
@@ -156,49 +186,59 @@ pub async fn register(
     Ok(Json(RegisterResponse {
         token,
         user: user_row_to_response(&row),
-        recovery_code,
     }))
 }
 
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> ApiResult<Json<LoginResult>> {
-    // Key on email + source IP so one IP cannot lock a victim's account globally,
-    // while online password guessing from that IP is still throttled.
-    let rate_key = format!("{}|{}", req.email, addr.ip());
-    if !state.login_rate_limiter.allow(&rate_key).await? {
+    // Two independent buckets. The per-IP bucket stops one host from grinding
+    // through candidates. The per-email bucket is what stops a distributed
+    // attack: without it, rotating source IPs gives an attacker unlimited
+    // guesses against a single account, because every new IP is a fresh key.
+    let ip = client_ip(&state, &headers, &addr);
+    let ip_key = format!("login-ip|{ip}");
+    let email_key = format!("login-email|{}", req.email.trim().to_lowercase());
+    if !state.login_rate_limiter.allow(&ip_key).await?
+        || !state.login_rate_limiter.allow(&email_key).await?
+    {
         return Err(NivritError::Forbidden.into());
     }
+
+    let auth_hash = decode_credential(&req.auth_hash, "auth_hash")?;
 
     let row = queries::get_user_by_email(&state.db, &req.email).await;
 
     // Always perform exactly one Argon2 verify, even when the account is missing
-    // or password-less, so timing doesn't leak account existence.
-    let password_ok = match row {
+    // or credential-less, so timing doesn't leak account existence.
+    let credential_ok = match row {
         Ok(ref user) => match user.password_hash.as_deref() {
-            Some(hash) => verify_password(&req.password, hash)?,
+            Some(hash) => verify_credential(auth_hash, hash.to_string()).await?,
             None => {
-                let _ = verify_password(&req.password, dummy_hash());
+                let _ = verify_credential(auth_hash, dummy_hash().to_string()).await;
                 false
             }
         },
         Err(_) => {
-            let _ = verify_password(&req.password, dummy_hash());
+            let _ = verify_credential(auth_hash, dummy_hash().to_string()).await;
             false
         }
     };
 
-    if !password_ok {
+    if !credential_ok {
         // Best-effort: a DB hiccup here must not change the auth outcome.
-        let _ = state.login_rate_limiter.record_failure(&rate_key).await;
+        let _ = state.login_rate_limiter.record_failure(&ip_key).await;
+        let _ = state.login_rate_limiter.record_failure(&email_key).await;
         return Err(NivritError::Unauthorized.into());
     }
 
-    // password_ok == true guarantees the lookup succeeded.
+    // credential_ok == true guarantees the lookup succeeded.
     let row = row?;
-    let _ = state.login_rate_limiter.record_success(&rate_key).await;
+    let _ = state.login_rate_limiter.record_success(&ip_key).await;
+    let _ = state.login_rate_limiter.record_success(&email_key).await;
 
     if row.totp_enabled {
         let temp_token = state
@@ -305,12 +345,19 @@ pub struct OAuthSetupRequest {
     /// client-supplied provider/provider_user_id/email/name, which were trusted
     /// without proof and allowed account pre-hijacking.
     pub setup_token: String,
-    pub master_password: String,
+    /// Base64 client-derived authentication hash for the chosen master
+    /// password. The password itself never reaches the server.
+    pub auth_hash: String,
     pub public_key: String,
     pub encrypted_private_key: String,
     pub private_key_nonce: String,
     #[serde(default = "default_private_key_algorithm")]
     pub private_key_algorithm: String,
+    pub recovery_auth_hash: String,
+    pub encrypted_private_key_recovery: String,
+    pub private_key_recovery_nonce: String,
+    #[serde(default = "default_private_key_algorithm")]
+    pub private_key_recovery_algorithm: String,
 }
 
 pub async fn oauth_authorize(
@@ -388,41 +435,35 @@ pub async fn oauth_setup(
 ) -> ApiResult<Json<RegisterResponse>> {
     // Trust only the server-signed identity, never client-supplied fields.
     let identity = crate::oauth_token::verify_setup(&state.config.auth_secret, &req.setup_token)?;
-    if identity.email.is_empty() || req.master_password.len() < 8 {
-        return Err(NivritError::Validation(
-            "master password must be at least 8 characters".into(),
-        )
-        .into());
+    if identity.email.is_empty() {
+        return Err(NivritError::Validation("OAuth identity has no email".into()).into());
     }
+
+    let auth_hash = decode_credential(&req.auth_hash, "auth_hash")?;
+    let recovery_auth_hash = decode_credential(&req.recovery_auth_hash, "recovery_auth_hash")?;
 
     let public_key = decode_b64(&req.public_key, "public_key")?;
     let encrypted_private_key = decode_b64(&req.encrypted_private_key, "encrypted_private_key")?;
     let private_key_nonce = decode_b64(&req.private_key_nonce, "private_key_nonce")?;
-
-    let plaintext_private_key = decrypt_private_key_with_password(
-        &encrypted_private_key,
-        &private_key_nonce,
-        &req.master_password,
-    )
-    .map_err(|_| NivritError::Validation("invalid encrypted private key".into()))?;
-
-    let recovery_code = nivrit_auth::recovery::generate_recovery_code();
-    let recovery_key = nivrit_auth::recovery::derive_recovery_key(
-        &recovery_code,
-        state.recovery_code_pepper.as_deref(),
+    let encrypted_private_key_recovery = decode_b64(
+        &req.encrypted_private_key_recovery,
+        "encrypted_private_key_recovery",
     )?;
-    let recovery_code_hash = nivrit_auth::recovery::hash_recovery_code(
-        &recovery_code,
-        state.recovery_code_pepper.as_deref(),
+    let private_key_recovery_nonce = decode_b64(
+        &req.private_key_recovery_nonce,
+        "private_key_recovery_nonce",
     )?;
-    let (encrypted_private_key_recovery, private_key_recovery_nonce) =
-        nivrit_auth::recovery::encrypt_with_key(&plaintext_private_key, &recovery_key)?;
+
+    // OAuth users still set a master password client-side — it wraps their
+    // private key — so they do get a stored credential, unlike before.
+    let password_hash = hash_credential(auth_hash).await?;
+    let recovery_code_hash = hash_credential(recovery_auth_hash).await?;
 
     let row = queries::create_user_with_recovery(
         &state.db,
         &identity.email,
         identity.name.as_deref(),
-        None, // OAuth-only users have no password hash
+        Some(&password_hash),
         &public_key,
         &encrypted_private_key,
         &private_key_nonce,
@@ -430,7 +471,7 @@ pub async fn oauth_setup(
         Some(&recovery_code_hash),
         Some(&encrypted_private_key_recovery),
         Some(&private_key_recovery_nonce),
-        Some("aes256gcm-v1"),
+        Some(&req.private_key_recovery_algorithm),
         None,
     )
     .await?;
@@ -447,7 +488,6 @@ pub async fn oauth_setup(
     Ok(Json(RegisterResponse {
         token,
         user: user_row_to_response(&row),
-        recovery_code,
     }))
 }
 
@@ -460,11 +500,38 @@ pub struct ForgotPasswordRequest {
     pub email: String,
 }
 
+/// Step 1 of reset: prove possession of the recovery code and receive the
+/// recovery blob. The blob is ciphertext the server cannot open — only the
+/// holder of the actual recovery code can, and that code never leaves the
+/// client.
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordBeginRequest {
+    pub token: String,
+    pub recovery_auth_hash: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResetPasswordBeginResponse {
+    pub encrypted_private_key_recovery: String,
+    pub private_key_recovery_nonce: String,
+    pub private_key_recovery_algorithm: String,
+}
+
+/// Step 2 of reset: the client has decrypted its private key with the recovery
+/// key and re-wrapped it under the new password. It uploads the new credential
+/// and the new ciphertext.
+///
+/// The recovery blob itself is unchanged by a password reset: it wraps the
+/// private key under the *recovery* key, which does not depend on the password.
 #[derive(Debug, Deserialize)]
 pub struct ResetPasswordRequest {
     pub token: String,
-    pub recovery_code: String,
-    pub new_password: String,
+    pub recovery_auth_hash: String,
+    pub new_auth_hash: String,
+    pub encrypted_private_key: String,
+    pub private_key_nonce: String,
+    #[serde(default = "default_private_key_algorithm")]
+    pub private_key_algorithm: String,
 }
 
 pub async fn forgot_password(
@@ -512,53 +579,104 @@ pub async fn verify_reset_token(
     Ok(Json(serde_json::json!({ "valid": true })))
 }
 
-pub async fn reset_password(
-    State(state): State<AppState>,
-    Json(req): Json<ResetPasswordRequest>,
-) -> ApiResult<Json<AuthResponse>> {
-    if req.new_password.len() < 8 {
-        return Err(
-            NivritError::Validation("password must be at least 8 characters".into()).into(),
-        );
-    }
+/// Validate a reset token and the supplied recovery credential together.
+///
+/// Returns the user row on success. Every failure path returns `Unauthorized`
+/// so this cannot be used to probe which of the two was wrong.
+async fn authorize_reset(
+    state: &AppState,
+    token: &str,
+    recovery_auth_hash: &str,
+) -> ApiResult<(nivrit_db::models::UserRow, uuid::Uuid)> {
+    let recovery_auth_hash = decode_credential(recovery_auth_hash, "recovery_auth_hash")?;
 
-    let token_hash = hash_token(&req.token);
-    let token_row = queries::get_password_reset_token_by_hash(&state.db, &token_hash).await?;
+    let token_hash = hash_token(token);
+    let token_row = queries::get_password_reset_token_by_hash(&state.db, &token_hash)
+        .await
+        .map_err(|_| NivritError::Unauthorized)?;
     if token_row.used_at.is_some() || token_row.expires_at < Utc::now() {
         return Err(NivritError::Unauthorized.into());
     }
 
     let user = queries::get_user_by_id(&state.db, token_row.user_id).await?;
-    let recovery_code_hash = user
+    let stored_hash = user
         .recovery_code_hash
         .as_deref()
-        .ok_or(NivritError::Forbidden)?;
-    if !nivrit_auth::recovery::verify_recovery_code(
-        &req.recovery_code,
-        recovery_code_hash,
-        state.recovery_code_pepper.as_deref(),
-    )? {
+        .ok_or(NivritError::Unauthorized)?;
+
+    if !verify_credential(recovery_auth_hash, stored_hash.to_string()).await? {
         return Err(NivritError::Unauthorized.into());
     }
 
-    let recovery_key = nivrit_auth::recovery::derive_recovery_key(
-        &req.recovery_code,
-        state.recovery_code_pepper.as_deref(),
-    )?;
-    let encrypted_recovery = user
-        .encrypted_private_key_recovery
-        .as_ref()
-        .ok_or_else(|| NivritError::Internal("recovery material missing".into()))?;
-    let recovery_nonce = user
-        .private_key_recovery_nonce
-        .as_ref()
-        .ok_or_else(|| NivritError::Internal("recovery material missing".into()))?;
-    let plaintext_private_key =
-        nivrit_auth::recovery::decrypt_with_key(encrypted_recovery, recovery_nonce, &recovery_key)?;
+    Ok((user, token_row.id))
+}
 
-    let new_password_hash = hash_password(&req.new_password)?;
-    let (new_encrypted_private_key, new_private_key_nonce, _) =
-        encrypt_private_key_with_password(&plaintext_private_key, &req.new_password)?;
+pub async fn reset_password_begin(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<ResetPasswordBeginRequest>,
+) -> ApiResult<Json<ResetPasswordBeginResponse>> {
+    // Guessing the recovery credential is the only way past this endpoint, so
+    // throttle it the same way login is throttled.
+    let rate_key = format!("reset|{}", client_ip(&state, &headers, &addr));
+    if !state.login_rate_limiter.allow(&rate_key).await? {
+        return Err(NivritError::Forbidden.into());
+    }
+
+    let (user, _) = match authorize_reset(&state, &req.token, &req.recovery_auth_hash).await {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = state.login_rate_limiter.record_failure(&rate_key).await;
+            return Err(e);
+        }
+    };
+    let _ = state.login_rate_limiter.record_success(&rate_key).await;
+
+    let (Some(ciphertext), Some(nonce)) = (
+        user.encrypted_private_key_recovery.as_ref(),
+        user.private_key_recovery_nonce.as_ref(),
+    ) else {
+        return Err(NivritError::Internal("recovery material missing".into()).into());
+    };
+
+    Ok(Json(ResetPasswordBeginResponse {
+        encrypted_private_key_recovery: STANDARD.encode(ciphertext),
+        private_key_recovery_nonce: STANDARD.encode(nonce),
+        private_key_recovery_algorithm: user
+            .private_key_recovery_algorithm
+            .clone()
+            .unwrap_or_else(default_private_key_algorithm),
+    }))
+}
+
+pub async fn reset_password(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<ResetPasswordRequest>,
+) -> ApiResult<Json<AuthResponse>> {
+    let rate_key = format!("reset|{}", client_ip(&state, &headers, &addr));
+    if !state.login_rate_limiter.allow(&rate_key).await? {
+        return Err(NivritError::Forbidden.into());
+    }
+
+    let (user, token_id) = match authorize_reset(&state, &req.token, &req.recovery_auth_hash).await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = state.login_rate_limiter.record_failure(&rate_key).await;
+            return Err(e);
+        }
+    };
+    let _ = state.login_rate_limiter.record_success(&rate_key).await;
+
+    let new_auth_hash = decode_credential(&req.new_auth_hash, "new_auth_hash")?;
+    let new_encrypted_private_key =
+        decode_b64(&req.encrypted_private_key, "encrypted_private_key")?;
+    let new_private_key_nonce = decode_b64(&req.private_key_nonce, "private_key_nonce")?;
+
+    let new_password_hash = hash_credential(new_auth_hash).await?;
 
     queries::update_user_password_and_keys(
         &state.db,
@@ -566,11 +684,11 @@ pub async fn reset_password(
         &new_password_hash,
         &new_encrypted_private_key,
         &new_private_key_nonce,
-        "aes256gcm-v1",
+        &req.private_key_algorithm,
     )
     .await?;
 
-    queries::mark_password_reset_token_used(&state.db, token_row.id).await?;
+    queries::mark_password_reset_token_used(&state.db, token_id).await?;
 
     let token = state.jwt.sign(user.id, user.email.clone())?;
     Ok(Json(AuthResponse {
@@ -598,17 +716,47 @@ pub struct TotpVerifyRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct TotpDisableRequest {
-    pub password: String,
+    /// Client-derived authentication hash, same value used at login.
+    pub auth_hash: String,
     pub code: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TotpSetupRequest {
+    /// Required only when re-enrolling over an existing TOTP secret.
+    #[serde(default)]
+    pub auth_hash: Option<String>,
 }
 
 pub async fn setup_totp(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
+    Json(req): Json<TotpSetupRequest>,
 ) -> ApiResult<Json<TotpSetupResponse>> {
     let Some(totp_key) = state.totp_encryption_key else {
         return Err(NivritError::Internal("TOTP encryption key not configured".into()).into());
     };
+
+    // Re-enrolling replaces the existing second factor, so it must cost more
+    // than a stolen session token. Without this, anyone holding a hijacked JWT
+    // or a leaked PAT can silently swap in their own authenticator.
+    let row = queries::get_user_by_id(&state.db, user.id).await?;
+    if row.totp_enabled {
+        let Some(auth_hash) = req.auth_hash.as_deref() else {
+            return Err(NivritError::Validation(
+                "auth_hash required to replace an existing TOTP secret".into(),
+            )
+            .into());
+        };
+        let auth_hash = decode_credential(auth_hash, "auth_hash")?;
+        let Some(stored) = row.password_hash.as_deref() else {
+            return Err(NivritError::Forbidden.into());
+        };
+        if !verify_credential(auth_hash, stored.to_string()).await? {
+            return Err(NivritError::Unauthorized.into());
+        }
+    }
+
     let secret = nivrit_auth::totp::generate_secret();
     let uri = nivrit_auth::totp::provisioning_uri(&secret, &user.email)?;
 
@@ -655,7 +803,8 @@ pub async fn disable_totp(
     let Some(password_hash) = row.password_hash.as_deref() else {
         return Err(NivritError::Forbidden.into());
     };
-    if !verify_password(&req.password, password_hash)? {
+    let auth_hash = decode_credential(&req.auth_hash, "auth_hash")?;
+    if !verify_credential(auth_hash, password_hash.to_string()).await? {
         return Err(NivritError::Unauthorized.into());
     }
 
@@ -665,7 +814,13 @@ pub async fn disable_totp(
     let Some(blob) = queries::get_totp_secret(&state.db, user.id).await? else {
         return Err(NivritError::Validation("TOTP not set up".into()).into());
     };
-    let (nonce, ciphertext) = blob.split_at(12);
+    // `split_at` panics when the slice is shorter than the split point, which in
+    // a handler means a killed task rather than an error response. The two
+    // sibling call sites guard this; so does this one now.
+    if blob.len() < TOTP_NONCE_LEN + AES_GCM_TAG_LEN {
+        return Err(NivritError::Internal("invalid TOTP blob".into()).into());
+    }
+    let (nonce, ciphertext) = blob.split_at(TOTP_NONCE_LEN);
     let secret = nivrit_auth::totp::decrypt_secret(ciphertext, nonce, &totp_key)
         .map_err(|_| NivritError::Internal("failed to decrypt TOTP secret".into()))?;
     if !nivrit_auth::totp::verify_code(&secret, &req.code) {
@@ -696,6 +851,47 @@ fn decode_b64(input: &str, field: &str) -> ApiResult<Vec<u8>> {
     STANDARD
         .decode(input)
         .map_err(|e| NivritError::Validation(format!("invalid {}: {}", field, e)).into())
+}
+
+/// Decode a client-derived credential and check it is the right shape.
+///
+/// Credentials are always a 32-byte Argon2id output. Rejecting anything else
+/// keeps a caller from sending a short or empty string and turning the stored
+/// hash into something cheap to attack.
+fn decode_credential(input: &str, field: &str) -> ApiResult<String> {
+    let bytes = decode_b64(input, field)?;
+    if bytes.len() != CREDENTIAL_LEN {
+        return Err(
+            NivritError::Validation(format!("{field} must be {CREDENTIAL_LEN} bytes")).into(),
+        );
+    }
+    // Re-encode canonically so that two encodings of the same bytes cannot
+    // produce two different stored hashes.
+    Ok(STANDARD.encode(&bytes))
+}
+
+/// Resolve the client address for rate limiting.
+///
+/// When the API sits behind the bundled nginx (or any reverse proxy) the socket
+/// peer is the proxy, which would collapse every user into a single rate-limit
+/// bucket. `NIVRIT_TRUSTED_PROXY` opts into reading the last hop from
+/// `X-Forwarded-For` instead. It is off by default: trusting that header from an
+/// arbitrary client would let anyone forge their way around the limiter.
+fn client_ip(state: &AppState, headers: &HeaderMap, addr: &SocketAddr) -> String {
+    if state.config.trusted_proxy {
+        // Take the last entry: earlier ones are client-supplied and forgeable,
+        // the final hop is the one our own proxy appended.
+        if let Some(last) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.rsplit(',').next())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            return last.to_string();
+        }
+    }
+    addr.ip().to_string()
 }
 
 fn generate_secure_token() -> String {

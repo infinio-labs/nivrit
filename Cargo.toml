@@ -81,3 +81,9 @@ dotenvy = "=0.15.7"
 [profile.release]
 opt-level = 3
 lto = true
+# Smallest possible binaries: one codegen unit lets LTO inline across the whole
+# crate graph, and no symbol table. Costs compile time, not runtime.
+# Deliberately NOT panic = "abort": a panic in one Axum handler must fail that
+# request, not kill the server for every other tenant.
+codegen-units = 1
+strip = "symbols"

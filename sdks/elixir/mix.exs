@@ -16,7 +16,7 @@ defmodule Nivrit.MixProject do
   defp package do
     [
       licenses: ["AGPL-3.0-only"],
-      links: %{"GitHub" => "https://github.com/infiniolabs/nivrit"}
+      links: %{"GitHub" => "https://github.com/infinio-labs/nivrit"}
     ]
   end
 

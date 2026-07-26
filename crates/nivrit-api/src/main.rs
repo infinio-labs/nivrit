@@ -1,5 +1,6 @@
 mod auth;
 mod config;
+mod cpu;
 mod error;
 mod handlers;
 mod oauth_token;
@@ -104,6 +105,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/auth/reset-password/verify",
             get(handlers::auth::verify_reset_token),
+        )
+        .route(
+            "/auth/reset-password/begin",
+            post(handlers::auth::reset_password_begin),
         )
         .route("/auth/reset-password", post(handlers::auth::reset_password))
         .route("/auth/totp/setup", post(handlers::auth::setup_totp))

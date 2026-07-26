@@ -3,7 +3,7 @@
 ```elixir
 defp deps do
   [
-    {:nivrit, github: "infiniolabs/nivrit", sparse: "sdks/elixir"}
+    {:nivrit, github: "infinio-labs/nivrit", sparse: "sdks/elixir"}
   ]
 end
 ```

@@ -4,9 +4,15 @@ use argon2::{
 };
 use nivrit_core::{NivritError, Result};
 
-// OWASP-aligned Argon2id parameters for password storage.
+// OWASP-aligned Argon2id parameters for credential storage.
 // m = 64 MiB, t = 3 passes, p = 1 lane, 32-byte output.
 // Adjust via environment-specific benchmarks; aim for ~100-500 ms per hash.
+//
+// The inputs here are client-derived authentication hashes, not raw passwords
+// (see the crate docs). They already carry a full Argon2id pass, so this second
+// hash exists to make a database leak non-replayable rather than to add
+// brute-force cost. The parameters stay high anyway: it is one hash per login,
+// and it keeps a single code path for every credential the server stores.
 fn argon2id_params() -> Params {
     Params::new(64 * 1024, 3, 1, Some(32))
         .expect("configured Argon2id parameters are within valid bounds")
