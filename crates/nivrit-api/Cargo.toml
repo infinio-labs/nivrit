@@ -43,4 +43,4 @@ rand = { workspace = true }
 sha2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 urlencoding = "2.1.3"
-axum-prometheus = "0.8.0"
+axum-prometheus = "0.10.0"
