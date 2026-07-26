@@ -138,11 +138,11 @@ jobs:
           done
 
       # Node -> npm registry: publish the 5 platform helper packages, then the SDK
-      - name: Setup pnpm
+      - name: Setup Bun
         if: matrix.sdk == 'node'
-        uses: pnpm/action-setup@v4
+        uses: oven-sh/setup-bun@v2
         with:
-          version: 11.9.0
+          bun-version: latest
       - name: Setup Node
         if: matrix.sdk == 'node'
         uses: actions/setup-node@v4
@@ -155,8 +155,8 @@ jobs:
           cp -r ../../helpers .
           bash scripts/build-platform-packages.sh
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-          for d in npm/helper-*; do (cd "$d" && pnpm publish --access public); done
-          pnpm publish --access public
+          for d in npm/helper-*; do (cd "$d" && bun publish --access public); done
+          bun publish --access public
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 

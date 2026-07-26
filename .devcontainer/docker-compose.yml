@@ -1,0 +1,46 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    user: vscode
+    env_file: .env
+    environment:
+      # Postgres is provided by the `postgres` service below.
+      DATABASE_URL: postgres://nivrit:nivrit@postgres:5432/nivrit
+      # The Vite dev server runs on http://localhost:3000 by default.
+      NIVRIT_CORS_ORIGIN: http://localhost:3000
+    volumes:
+      - ..:/workspace:cached
+      # Persist Rust build artifacts, Cargo registries, and Node modules
+      # across container rebuilds so you don't recompile/reinstall every time.
+      - target:/workspace/target
+      - cargo-cache:/home/vscode/.cargo
+      - web-node_modules:/workspace/crates/nivrit-web/node_modules
+      - web-wasm:/workspace/crates/nivrit-web/src/wasm/pkg
+    working_dir: /workspace
+    command: sleep infinity
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: nivrit
+      POSTGRES_PASSWORD: nivrit
+      POSTGRES_DB: nivrit
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nivrit -d nivrit"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  target:
+  cargo-cache:
+  web-node_modules:
+  web-wasm:
+  postgres-data:

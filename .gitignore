@@ -12,6 +12,7 @@ graphify-out/
 .env.local
 .env.*.local
 .env.docker
+/.devcontainer/.env
 
 # IDE
 .idea

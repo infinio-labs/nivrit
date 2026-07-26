@@ -1,0 +1,113 @@
+import { Mail, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { Button, Card, CardHeader, EmptyState, Input, Label, Select } from './ui';
+
+interface MembersTabProps {
+  selectedProjectId: string;
+  inviteEmail: string;
+  setInviteEmail: (v: string) => void;
+  inviteRole: 'admin' | 'member' | 'viewer';
+  setInviteRole: (v: 'admin' | 'member' | 'viewer') => void;
+  onInvite: (e: React.FormEvent) => void;
+}
+
+const roles = [
+  {
+    value: 'member',
+    label: 'Member',
+    description: 'Can view and manage secrets in assigned projects.',
+  },
+  {
+    value: 'admin',
+    label: 'Admin',
+    description: 'Can manage project members, environments, and secrets.',
+  },
+  {
+    value: 'viewer',
+    label: 'Viewer',
+    description: 'Read-only access to secrets.',
+  },
+];
+
+export function MembersTab(props: MembersTabProps) {
+  return (
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Members</h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          Invite teammates and share the project key securely with them.
+        </p>
+      </div>
+
+      {!props.selectedProjectId ? (
+        <EmptyState
+          icon={Users}
+          title="No project selected"
+          description="Select a project from the top navigation to invite members."
+        />
+      ) : (
+        <Card>
+          <CardHeader
+            title="Invite member"
+            description="They will receive access to the currently selected project."
+            action={<UserPlus className="text-slate-400" size={20} />}
+          />
+          <form onSubmit={props.onInvite} className="space-y-5 p-5">
+            <div>
+              <Label htmlFor="invite-email">Email address</Label>
+              <div className="relative">
+                <Mail
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={16}
+                />
+                <Input
+                  id="invite-email"
+                  data-testid="invite-email-input"
+                  type="email"
+                  placeholder="teammate@example.com"
+                  value={props.inviteEmail}
+                  onChange={(e) => props.setInviteEmail(e.target.value)}
+                  className="pl-9"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="invite-role">Role</Label>
+              <Select
+                id="invite-role"
+                data-testid="invite-role-select"
+                value={props.inviteRole}
+                onChange={(e) => props.setInviteRole(e.target.value as typeof props.inviteRole)}
+              >
+                {roles.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                {roles.find((r) => r.value === props.inviteRole)?.description}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+              <div className="flex items-start gap-3">
+                <ShieldCheck className="mt-0.5 text-primary-600" size={18} />
+                <p className="text-xs text-slate-600 dark:text-slate-300">
+                  The project key is encrypted to the invitee&apos;s public key before being sent
+                  to the server. Nivrit never sees the plaintext key.
+                </p>
+              </div>
+            </div>
+
+            <Button type="submit" data-testid="invite-btn">
+              <UserPlus size={16} />
+              Send invite
+            </Button>
+          </form>
+        </Card>
+      )}
+    </div>
+  );
+}

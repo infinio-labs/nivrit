@@ -65,27 +65,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: 11.9.0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: crates/nivrit-web/pnpm-lock.yaml
+          bun-version: latest
 
       - name: Install web dependencies
         working-directory: crates/nivrit-web
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Typecheck
         working-directory: crates/nivrit-web
-        run: pnpm run typecheck
+        run: bun run typecheck
 
       - name: Tests
         working-directory: crates/nivrit-web
-        run: pnpm run test
+        run: bun run test
 
   audit:
     name: cargo audit

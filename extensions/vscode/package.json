@@ -5,7 +5,6 @@
   "version": "0.1.0",
   "publisher": "nivrit",
   "private": true,
-  "packageManager": "pnpm@11.9.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/infiniolabs/nivrit"
@@ -125,8 +124,8 @@
     "build:wasm": "bash scripts/build-wasm.sh",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "pnpm exec vsce package --out nivrit-vscode.vsix",
-    "vscode:prepublish": "pnpm run build:wasm && pnpm run compile"
+    "package": "bun x vsce package --out nivrit-vscode.vsix",
+    "vscode:prepublish": "bun run build:wasm && bun run compile"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

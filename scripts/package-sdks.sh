@@ -7,7 +7,7 @@ mkdir -p "$OUT_DIR"
 
 echo "=== Packaging Node.js SDK ==="
 cd "$ROOT_DIR/sdks/node"
-pnpm pack --pack-destination "$OUT_DIR"
+bun pack --pack-destination "$OUT_DIR"
 
 echo "=== Packaging Python SDK ==="
 cd "$ROOT_DIR/sdks/python"

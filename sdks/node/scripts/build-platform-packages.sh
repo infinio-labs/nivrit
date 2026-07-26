@@ -40,5 +40,5 @@ EOF
   echo "built $dir"
 done
 
-echo "Publish all: for d in npm/helper-*; do (cd \"\$d\" && pnpm publish --access public); done"
-echo "Then publish the main SDK: pnpm publish --access public"
+echo "Publish all: for d in npm/helper-*; do (cd \"\$d\" && bun publish --access public); done"
+echo "Then publish the main SDK: bun publish --access public"

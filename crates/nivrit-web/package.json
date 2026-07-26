@@ -3,11 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "packageManager": "pnpm@11.9.0",
   "scripts": {
     "build:wasm": "cd ../nivrit-web-crypto && wasm-pack build --target bundler --out-dir ../nivrit-web/src/wasm/pkg",
     "dev": "vite",
-    "build": "pnpm run build:wasm && tsc && vite build",
+    "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run src",
@@ -15,23 +14,23 @@
     "e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@headlessui/react": "^2.2.10",
-    "@tailwindcss/vite": "^4.3.1",
-    "lucide-react": "^1.18.0",
-    "qrcode.react": "^4.2.0",
+    "@headlessui/react": "2.2.10",
+    "@tailwindcss/vite": "4.3.2",
+    "lucide-react": "1.23.0",
+    "qrcode.react": "4.2.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "tailwindcss": "^4.3.1"
+    "tailwindcss": "4.3.2"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
+    "@playwright/test": "1.61.1",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-react": "6.0.3",
     "typescript": "6.0.3",
-    "vite": "8.0.16",
-    "vite-plugin-top-level-await": "1.5.0",
-    "vite-plugin-wasm": "3.4.1",
-    "vitest": "^3.0.0"
+    "vite": "8.1.2",
+    "vite-plugin-top-level-await": "1.6.0",
+    "vite-plugin-wasm": "3.6.0",
+    "vitest": "3.0.0"
   }
 }

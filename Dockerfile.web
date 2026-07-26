@@ -3,16 +3,13 @@
 # -----------------------------------------------------------------------------
 # Build stage: compile the Vite + React frontend.
 # -----------------------------------------------------------------------------
-FROM node:22-slim AS builder
+FROM oven/bun:1 AS builder
 
 WORKDIR /app
 
-# Install pnpm globally.
-RUN npm install -g pnpm@11.9.0
-
 # Install dependencies first so Docker can cache this layer.
-COPY crates/nivrit-web/package.json crates/nivrit-web/pnpm-lock.yaml crates/nivrit-web/pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY crates/nivrit-web/package.json crates/nivrit-web/bun.lock ./
+RUN bun install --frozen-lockfile
 
 # Copy the rest of the frontend source, including the checked-in WASM package.
 COPY crates/nivrit-web/ ./
@@ -21,7 +18,7 @@ COPY crates/nivrit-web/ ./
 # wasm-pack build step and point the API client at the nginx-proxied /api path.
 ENV VITE_API_URL=/api
 ENV CI=true
-RUN pnpm run typecheck && pnpm exec vite build
+RUN bun run typecheck && bun run build
 # The crypto WASM package is loaded dynamically at runtime from a path relative
 # to the bundled JS chunk, so Vite does not automatically copy it into dist.
 RUN mkdir -p dist/assets/wasm/pkg && cp -r src/wasm/pkg/* dist/assets/wasm/pkg/

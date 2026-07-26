@@ -2,7 +2,6 @@
   "name": "@nivrit/sdk",
   "version": "0.1.0",
   "description": "Nivrit secrets SDK for Node.js",
-  "packageManager": "pnpm@11.9.0",
   "main": "src/index.js",
   "files": [
     "src/",
@@ -10,7 +9,7 @@
   ],
   "scripts": {
     "test": "node test/smoke.js",
-    "package": "pnpm pack"
+    "package": "bun pack"
   },
   "engines": {
     "node": ">=18.0.0"

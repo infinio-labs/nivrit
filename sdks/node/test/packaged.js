@@ -1,4 +1,4 @@
-// Packaged-install regression: run AFTER `pnpm install` of the SDK tarball plus
+// Packaged-install regression: run AFTER `bun install` of the SDK tarball plus
 // the matching @nivrit/helper-* tarball, from a temp project, with
 // NIVRIT_CRYPTO_HELPER unset and no cargo build present. Proves the
 // optionalDependency helper resolves and crypto works.

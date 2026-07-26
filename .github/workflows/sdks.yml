@@ -262,11 +262,11 @@ jobs:
           done
           ls -la helpers
 
-      - name: Setup pnpm
+      - name: Setup Bun
         if: matrix.sdk == 'node'
-        uses: pnpm/action-setup@v4
+        uses: oven-sh/setup-bun@v2
         with:
-          version: 11.9.0
+          bun-version: latest
 
       - name: Setup Node
         if: matrix.sdk == 'node'
@@ -318,13 +318,13 @@ jobs:
         run: |
           cp -r ../../helpers .
           bash scripts/build-platform-packages.sh
-          sdk_tgz="$PWD/$(pnpm pack --silent | tail -1)"
-          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && pnpm pack --silent | tail -1)"
+          sdk_tgz="$PWD/$(bun pack --silent | tail -1)"
+          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pack --silent | tail -1)"
           proj=$(mktemp -d)
           cp test/packaged.js "$proj/packaged.js"
           cd "$proj"
-          pnpm init
-          pnpm add --silent "$sdk_tgz" "$helper_tgz"
+          bun init
+          bun add --silent "$sdk_tgz" "$helper_tgz"
           env -u NIVRIT_CRYPTO_HELPER node packaged.js
 
       - name: Python packaged install
