@@ -17,8 +17,11 @@ function run(cmd: string): string {
   return execSync(cmd, { cwd: ROOT, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'inherit'] }).trim();
 }
 
+// Passes the master password through NIVRIT_PASSWORD rather than --password,
+// which the CLI warns about because a flag lands in shell history and `ps`.
+// The tests should model the way we tell users to do it.
 function cli(home: string, ...args: string[]): string {
-  const cmd = `${COMPOSE} exec -T -e HOME=${home} api niv ${args.join(' ')}`;
+  const cmd = `${COMPOSE} exec -T -e HOME=${home} -e NIVRIT_PASSWORD=${PASSWORD} api niv ${args.join(' ')}`;
   return run(cmd);
 }
 
@@ -43,8 +46,8 @@ export default async function globalSetup() {
 
   // Seed two registered users. The E2E spec itself exercises org/project/env
   // creation and member invitation through the web UI.
-  cli(`${HOME_DIR}-alice`, 'register', `--email ${ALICE_EMAIL}`, `--password ${PASSWORD}`, '--name AliceWeb');
-  cli(`${HOME_DIR}-bob`, 'register', `--email ${BOB_EMAIL}`, `--password ${PASSWORD}`, '--name BobWeb');
+  cli(`${HOME_DIR}-alice`, 'register', `--email ${ALICE_EMAIL}`, '--name AliceWeb');
+  cli(`${HOME_DIR}-bob`, 'register', `--email ${BOB_EMAIL}`, '--name BobWeb');
 
   const stateDir = join(import.meta.dirname, '.state');
   if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });

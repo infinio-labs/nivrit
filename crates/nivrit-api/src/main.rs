@@ -1,6 +1,5 @@
 mod auth;
 mod config;
-mod cpu;
 mod error;
 mod handlers;
 mod oauth_token;

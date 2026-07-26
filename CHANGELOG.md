@@ -21,8 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previous server-side length check no longer had anything to inspect. The rules
   now live in `nivrit-crypto` and are shared by the CLI and, via WASM, the
   browser — one implementation, so the two cannot drift.
-- Argon2id now runs on the blocking pool instead of the async runtime, where it
-  parked worker threads and starved unrelated requests.
+- The server stores credentials as a keyed `HMAC-SHA256` rather than Argon2id.
+  Memory-hardness there was wasted: the only way to produce a candidate
+  `auth_hash` is to run the client's 64 MiB derivation, which an attacker cannot
+  skip, so a second memory-hard hash charged every legitimate login for a cost
+  the attacker had already paid. Registration dropped from 128 MiB and ~220 ms of
+  server work to microseconds, which closes most of the remaining DoS surface,
+  and keying the hash means a database dump is useless without the application
+  secret. Measured at 654 ns against 110 ms.
+- The CLI no longer requires secrets as command-line flags. `--password` and
+  `--pat` land in shell history and are visible in `ps` for the lifetime of the
+  process, which spans an Argon2id derivation. Passwords are now prompted for by
+  default, with `--password-stdin`, `NIVRIT_PASSWORD` and `NIVRIT_PAT` for
+  non-interactive use; the flags still work but warn. Registration confirms the
+  password twice, since a mistyped one is unrecoverable.
 - Registration is rate-limited. It was unauthenticated and cost four 64 MiB
   Argon2id hashes per call.
 - Login is rate-limited per IP *and* per email. Keying on `email|ip` alone meant

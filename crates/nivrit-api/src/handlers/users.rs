@@ -198,8 +198,9 @@ pub async fn rotate_key(
     if recovery_auth_hash.len() != 32 {
         return Err(NivritError::Validation("recovery_auth_hash must be 32 bytes".into()).into());
     }
-    let recovery_code_hash =
-        crate::cpu::hash_credential(STANDARD.encode(&recovery_auth_hash)).await?;
+    let recovery_code_hash = state
+        .credentials
+        .hash(&STANDARD.encode(&recovery_auth_hash));
 
     // Decode everything before touching the database so a malformed entry
     // cannot abort the transaction halfway.

@@ -29,7 +29,7 @@ auth_hash = Argon2id(password, salt = SHA-256("nivrit-auth-v1" || lowercase(emai
 enc_key   = Argon2id(password, salt = random 16 bytes, stored beside the blob)
 ```
 
-`auth_hash` is an opaque credential; the server stores `Argon2id(auth_hash)`.
+`auth_hash` is an opaque credential; the server stores a keyed hash of it.
 `enc_key` never leaves the device and is the only value that unwraps the private
 key. Recovery codes follow the same split: the client generates the code, derives
 the recovery key locally, wraps its own private key, and sends only
@@ -44,9 +44,21 @@ possession of one reveals nothing about the other. A server that records every
 byte it receives still cannot derive the key that opens a private key. The claim
 in `docs/architecture.md` is now backed by the protocol rather than by trust.
 
-**Storing a hash of the credential still matters.** `auth_hash` is a bearer
-credential — anyone holding it can authenticate. Hashing it again server-side
-with a random salt means a database leak does not yield a replayable value.
+**Storing a hash of the credential still matters, but it must be fast.**
+`auth_hash` is a bearer credential — anyone holding it can authenticate — so the
+server stores a hash rather than the value. That hash is `HMAC-SHA256` keyed by
+a value derived from the application secret, not Argon2id.
+
+Memory-hardness would be wasted there. The only way to produce a candidate
+`auth_hash` is to run the client's 64 MiB Argon2id, which an attacker holding a
+database dump cannot skip; brute-forcing the 32-byte value directly is 2^256.
+A second memory-hard hash on the server would therefore double the attacker's
+cost while also charging it to every legitimate login and making unauthenticated
+registration cost 128 MiB of server memory. Memory-hardness belongs where the
+attacker cannot avoid it and the defender pays least — once, on the user's own
+device. Raising the client parameters buys strictly more than splitting the
+budget. Keying the server-side hash additionally means a database dump alone is
+useless, which an unkeyed slow hash does not give you.
 
 **The server can no longer enforce password policy.** It sees a fixed-width hash
 and cannot know whether the password behind it was twelve characters or one. All

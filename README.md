@@ -55,7 +55,9 @@ just dev-api
 In another terminal:
 
 ```bash
-just cmd register --email you@example.com --password yourpassword123 --name You
+# Prompts for a master password. For scripts, use NIVRIT_PASSWORD or
+# --password-stdin; a --password flag lands in shell history and `ps`.
+just cmd register --email you@example.com --name You
 ORG=$(just cmd create-org --name MyOrg --slug myorg | awk '{print $1}')
 PROJ=$(just cmd create-project --org-id $ORG --name MyProject --slug myproject | awk '{print $1}')
 ENV=$(just cmd create-environment --project-id $PROJ --name Prod --slug prod | awk '{print $1}')
@@ -89,7 +91,7 @@ For a production-oriented sample, see [`deploy/docker-compose.yml`](deploy/docke
 - `crates/nivrit-core` — shared domain types and errors
 - `crates/nivrit-crypto` — client-side E2EE primitives
 - `crates/nivrit-db` — SQLx migrations and query layer
-- `crates/nivrit-auth` — password hashing, JWT, auth middleware
+- `crates/nivrit-auth` — credential hashing, JWT, auth middleware
 - `crates/nivrit-api` — Axum HTTP API server
 - `crates/nivrit-cli` — command-line interface
 - `crates/nivrit-web` — Vite + React dashboard

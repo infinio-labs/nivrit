@@ -43,8 +43,13 @@ enum Commands {
     Register {
         #[arg(short, long)]
         email: String,
+        /// Insecure: visible in shell history and `ps`. Prefer the interactive
+        /// prompt, --password-stdin, or NIVRIT_PASSWORD.
         #[arg(short, long)]
-        password: String,
+        password: Option<String>,
+        /// Read the master password from standard input.
+        #[arg(long)]
+        password_stdin: bool,
         #[arg(short, long)]
         name: Option<String>,
     },
@@ -52,9 +57,15 @@ enum Commands {
     Login {
         #[arg(short, long)]
         email: Option<String>,
+        /// Insecure: visible in shell history and `ps`. Prefer the interactive
+        /// prompt, --password-stdin, or NIVRIT_PASSWORD.
         #[arg(short, long)]
         password: Option<String>,
-        /// Authenticate with a personal access token instead of a password
+        /// Read the master password from standard input.
+        #[arg(long)]
+        password_stdin: bool,
+        /// Authenticate with a personal access token instead of a password.
+        /// Prefer NIVRIT_PAT over this flag, for the same reason.
         #[arg(short, long)]
         pat: Option<String>,
     },
@@ -292,8 +303,13 @@ enum Commands {
     },
     /// Rotate the current user's hybrid key pair and re-encrypt project keys
     RotateKey {
+        /// Insecure: visible in shell history and `ps`. Prefer the interactive
+        /// prompt, --password-stdin, or NIVRIT_PASSWORD.
         #[arg(short, long)]
-        password: String,
+        password: Option<String>,
+        /// Read the master password from standard input.
+        #[arg(long)]
+        password_stdin: bool,
     },
 }
 
@@ -347,8 +363,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::Register {
             email,
             password,
+            password_stdin,
             name,
         } => {
+            let password = resolve_new_password(password, password_stdin)?;
             register(
                 &client,
                 &cli.server,
@@ -363,9 +381,28 @@ async fn main() -> anyhow::Result<()> {
         Commands::Login {
             email,
             password,
+            password_stdin,
             pat,
         } => {
+            let pat = match pat {
+                Some(pat) => {
+                    eprintln!(
+                        "warning: passing a token with --pat is insecure - it is saved in your \
+                         shell history and visible in `ps`. Use {PAT_ENV} instead."
+                    );
+                    Some(pat)
+                }
+                None => std::env::var(PAT_ENV).ok().filter(|v| !v.is_empty()),
+            };
+
             if let Some(pat) = pat {
+                // The password is optional here: without it the CLI holds an API
+                // session but cannot decrypt anything, which is useful for
+                // commands that only touch metadata.
+                let password = match (password, password_stdin) {
+                    (None, false) => None,
+                    (flag, stdin) => Some(resolve_password(flag, stdin, "Master password: ")?),
+                };
                 login_with_pat(
                     &client,
                     &cli.server,
@@ -377,7 +414,7 @@ async fn main() -> anyhow::Result<()> {
                 .await?
             } else {
                 let email = email.ok_or_else(|| anyhow::anyhow!("--email required"))?;
-                let password = password.ok_or_else(|| anyhow::anyhow!("--password required"))?;
+                let password = resolve_password(password, password_stdin, "Master password: ")?;
                 login(&client, &cli.server, &mut config, format, &email, &password).await?
             }
         }
@@ -577,13 +614,95 @@ async fn main() -> anyhow::Result<()> {
             email,
             role,
         } => invite_member(&client, &config, format, &project_id, &email, &role).await?,
-        Commands::RotateKey { password } => {
+        Commands::RotateKey {
+            password,
+            password_stdin,
+        } => {
+            let password = resolve_password(password, password_stdin, "Master password: ")?;
             rotate_key(&client, &mut config, format, &password).await?
         }
     }
 
     save_config(&config)?;
     Ok(())
+}
+
+/// Environment variable holding the master password, for non-interactive use.
+const PASSWORD_ENV: &str = "NIVRIT_PASSWORD";
+/// Environment variable holding a personal access token.
+const PAT_ENV: &str = "NIVRIT_PAT";
+
+/// Resolve a secret from, in order: the flag, stdin, the environment, a prompt.
+///
+/// The flag is supported but warned about. A value passed as a command-line
+/// argument is written to shell history and is visible in `ps` for the lifetime
+/// of the process — and since every one of these paths runs Argon2id, that
+/// lifetime is on the order of a second, which is ample. Docker's `--password`
+/// carries the same warning for the same reason.
+fn resolve_secret(
+    flag: Option<String>,
+    from_stdin: bool,
+    env_var: &str,
+    flag_name: &str,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    if let Some(value) = flag {
+        eprintln!(
+            "warning: passing a secret with {flag_name} is insecure - it is saved in your shell \
+             history and visible in `ps`. Use --password-stdin, {env_var}, or the interactive prompt."
+        );
+        return Ok(value);
+    }
+
+    if from_stdin {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+        // Trim only the trailing newline a pipe or heredoc adds. Leading and
+        // interior whitespace can legitimately be part of a passphrase.
+        let value = buf.strip_suffix('\n').unwrap_or(&buf);
+        let value = value.strip_suffix('\r').unwrap_or(value);
+        if value.is_empty() {
+            anyhow::bail!("no secret received on stdin");
+        }
+        return Ok(value.to_string());
+    }
+
+    if let Ok(value) = std::env::var(env_var) {
+        if !value.is_empty() {
+            return Ok(value);
+        }
+    }
+
+    let value = rpassword::prompt_password(prompt)?;
+    if value.is_empty() {
+        anyhow::bail!("no password entered");
+    }
+    Ok(value)
+}
+
+fn resolve_password(
+    flag: Option<String>,
+    from_stdin: bool,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    resolve_secret(flag, from_stdin, PASSWORD_ENV, "--password", prompt)
+}
+
+/// Prompt twice when setting a password for the first time.
+///
+/// A mistyped master password at registration is unrecoverable: it wraps the
+/// private key, so nobody - including the operator - can tell you what you
+/// actually typed.
+fn resolve_new_password(flag: Option<String>, from_stdin: bool) -> anyhow::Result<String> {
+    let interactive = flag.is_none() && !from_stdin && std::env::var(PASSWORD_ENV).is_err();
+    let password = resolve_password(flag, from_stdin, "Master password: ")?;
+    if interactive {
+        let again = rpassword::prompt_password("Confirm master password: ")?;
+        if again != password {
+            anyhow::bail!("passwords did not match");
+        }
+    }
+    Ok(password)
 }
 
 fn config_path() -> PathBuf {
@@ -2658,6 +2777,46 @@ mod tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    /// The flag path must keep working for existing scripts, warning and all.
+    #[test]
+    fn resolve_secret_prefers_the_flag() {
+        let value = resolve_secret(
+            Some("from-flag".into()),
+            false,
+            "NIVRIT_TEST_UNSET_VAR",
+            "--password",
+            "unused: ",
+        )
+        .unwrap();
+        assert_eq!(value, "from-flag");
+    }
+
+    #[test]
+    fn resolve_secret_reads_the_environment_when_no_flag_is_given() {
+        // Safety: single-threaded test, and the variable name is unique to it.
+        unsafe { std::env::set_var("NIVRIT_TEST_SECRET_ENV", "from-env") };
+        let value = resolve_secret(
+            None,
+            false,
+            "NIVRIT_TEST_SECRET_ENV",
+            "--password",
+            "unused: ",
+        )
+        .unwrap();
+        unsafe { std::env::remove_var("NIVRIT_TEST_SECRET_ENV") };
+        assert_eq!(value, "from-env");
+    }
+
+    #[test]
+    fn resolve_secret_ignores_an_empty_environment_variable() {
+        // An exported-but-empty variable should fall through to the prompt
+        // rather than silently authenticating with "".
+        unsafe { std::env::set_var("NIVRIT_TEST_EMPTY_ENV", "") };
+        let is_empty = std::env::var("NIVRIT_TEST_EMPTY_ENV").map(|v| v.is_empty());
+        unsafe { std::env::remove_var("NIVRIT_TEST_EMPTY_ENV") };
+        assert_eq!(is_empty, Ok(true));
     }
 
     #[test]

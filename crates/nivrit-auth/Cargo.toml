@@ -11,7 +11,6 @@ nivrit-core = { path = "../nivrit-core" }
 nivrit-crypto = { path = "../nivrit-crypto" }
 nivrit-db = { path = "../nivrit-db" }
 
-argon2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -31,3 +30,9 @@ lettre = { version = "=0.11.22", default-features = false, features = ["builder"
 # TOTP secret encryption
 aes-gcm = { workspace = true }
 base64 = { workspace = true }
+
+# Credential hashing (see src/credential.rs for why this is a MAC, not Argon2)
+hmac = { workspace = true }
+hkdf = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }

@@ -1,4 +1,4 @@
-use nivrit_auth::{EmailConfig, JwtConfig};
+use nivrit_auth::{CredentialHasher, EmailConfig, JwtConfig};
 use nivrit_db::DbPool;
 
 use crate::{config::Config, rate_limit::LoginRateLimiter, signing::SignatureService};
@@ -11,6 +11,8 @@ const LOGIN_LOCKOUT_SECONDS: u64 = 900; // 15 minutes
 pub struct AppState {
     pub db: DbPool,
     pub jwt: JwtConfig,
+    /// Hashes the opaque credentials clients send in place of passwords.
+    pub credentials: CredentialHasher,
     pub login_rate_limiter: LoginRateLimiter,
     pub signature_service: Option<SignatureService>,
     pub email_config: EmailConfig,
@@ -63,6 +65,7 @@ impl AppState {
 
         Ok(Self {
             db,
+            credentials: CredentialHasher::new(&config.auth_secret),
             jwt: JwtConfig {
                 secret: config.auth_secret.clone(),
                 expiry_seconds: config.token_expiry_seconds,

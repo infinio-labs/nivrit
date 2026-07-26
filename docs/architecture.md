@@ -31,9 +31,19 @@ auth_hash = Argon2id(password, salt = SHA-256("nivrit-auth-v1" || lowercase(emai
 enc_key   = Argon2id(password, salt = random 16 bytes, stored with the blob)
 ```
 
-`auth_hash` is an opaque credential. The server stores `Argon2id(auth_hash)`, so
-even a database leak yields nothing replayable. `enc_key` never leaves the
-client and is the only thing that unwraps the private key.
+`auth_hash` is an opaque credential. The server stores it as a keyed hash —
+`HMAC-SHA256` under a key derived from the application secret — so a database
+leak yields nothing replayable, and nothing attackable without also holding the
+server's configuration. `enc_key` never leaves the client and is the only thing
+that unwraps the private key.
+
+The server-side hash is deliberately fast rather than memory-hard. The
+brute-force cost is already paid on the client: the only way to produce a
+candidate `auth_hash` is to run the 64 MiB Argon2id above, which an attacker
+cannot skip. Repeating that work on the server would charge every legitimate
+login for it and turn unauthenticated registration into a request that forces
+128 MiB, without meaningfully raising the attacker's cost. See
+[`adr/0002`](adr/0002-split-derivation-auth.md).
 
 The two use different salts, so knowing one reveals nothing about the other.
 This is what makes the "malicious operator" guarantee below real rather than

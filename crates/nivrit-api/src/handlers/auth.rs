@@ -12,13 +12,8 @@ use rand::TryRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
-use std::sync::LazyLock;
 
-use crate::{
-    cpu::{hash_credential, verify_credential},
-    error::ApiError,
-    state::AppState,
-};
+use crate::{error::ApiError, state::AppState};
 
 type ApiResult<T> = std::result::Result<T, ApiError>;
 
@@ -33,17 +28,10 @@ fn default_private_key_algorithm() -> String {
     "aes256gcm-v1".into()
 }
 
-/// A real Argon2 hash used to equalize login timing on the account-missing and
-/// credential-less (OAuth-only) paths, so response time can't reveal whether an
-/// account exists. Computed once.
-static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
-    nivrit_auth::hash_password("nivrit-timing-equalization-dummy-credential")
-        .expect("dummy credential hash must compute")
-});
-
-fn dummy_hash() -> &'static str {
-    DUMMY_PASSWORD_HASH.as_str()
-}
+/// A credential that no client can present, used to equalize login timing on the
+/// account-missing and credential-less (OAuth-only) paths so that response time
+/// cannot reveal whether an account exists.
+const DUMMY_CREDENTIAL: &str = "nivrit-timing-equalization-dummy-credential";
 
 /// Registration payload.
 ///
@@ -161,8 +149,8 @@ pub async fn register(
 
     // Both credentials are stored as Argon2id hashes so that a database leak
     // yields nothing replayable.
-    let password_hash = hash_credential(auth_hash).await?;
-    let recovery_code_hash = hash_credential(recovery_auth_hash).await?;
+    let password_hash = state.credentials.hash(&auth_hash);
+    let recovery_code_hash = state.credentials.hash(&recovery_auth_hash);
 
     let row = queries::create_user_with_recovery(
         &state.db,
@@ -209,6 +197,7 @@ pub async fn login(
     }
 
     let auth_hash = decode_credential(&req.auth_hash, "auth_hash")?;
+    let dummy = state.credentials.hash(DUMMY_CREDENTIAL);
 
     let row = queries::get_user_by_email(&state.db, &req.email).await;
 
@@ -216,14 +205,14 @@ pub async fn login(
     // or credential-less, so timing doesn't leak account existence.
     let credential_ok = match row {
         Ok(ref user) => match user.password_hash.as_deref() {
-            Some(hash) => verify_credential(auth_hash, hash.to_string()).await?,
+            Some(hash) => state.credentials.verify(&auth_hash, hash)?,
             None => {
-                let _ = verify_credential(auth_hash, dummy_hash().to_string()).await;
+                let _ = state.credentials.verify(&auth_hash, &dummy);
                 false
             }
         },
         Err(_) => {
-            let _ = verify_credential(auth_hash, dummy_hash().to_string()).await;
+            let _ = state.credentials.verify(&auth_hash, &dummy);
             false
         }
     };
@@ -456,8 +445,8 @@ pub async fn oauth_setup(
 
     // OAuth users still set a master password client-side — it wraps their
     // private key — so they do get a stored credential, unlike before.
-    let password_hash = hash_credential(auth_hash).await?;
-    let recovery_code_hash = hash_credential(recovery_auth_hash).await?;
+    let password_hash = state.credentials.hash(&auth_hash);
+    let recovery_code_hash = state.credentials.hash(&recovery_auth_hash);
 
     let row = queries::create_user_with_recovery(
         &state.db,
@@ -610,7 +599,7 @@ async fn authorize_reset(
         .as_deref()
         .ok_or(NivritError::Unauthorized)?;
 
-    if !verify_credential(recovery_auth_hash, stored_hash.to_string()).await? {
+    if !state.credentials.verify(&recovery_auth_hash, stored_hash)? {
         return Err(NivritError::Unauthorized.into());
     }
 
@@ -682,7 +671,7 @@ pub async fn reset_password(
         decode_b64(&req.encrypted_private_key, "encrypted_private_key")?;
     let new_private_key_nonce = decode_b64(&req.private_key_nonce, "private_key_nonce")?;
 
-    let new_password_hash = hash_credential(new_auth_hash).await?;
+    let new_password_hash = state.credentials.hash(&new_auth_hash);
 
     queries::update_user_password_and_keys(
         &state.db,
@@ -758,7 +747,7 @@ pub async fn setup_totp(
         let Some(stored) = row.password_hash.as_deref() else {
             return Err(NivritError::Forbidden.into());
         };
-        if !verify_credential(auth_hash, stored.to_string()).await? {
+        if !state.credentials.verify(&auth_hash, stored)? {
             return Err(NivritError::Unauthorized.into());
         }
     }
@@ -810,7 +799,7 @@ pub async fn disable_totp(
         return Err(NivritError::Forbidden.into());
     };
     let auth_hash = decode_credential(&req.auth_hash, "auth_hash")?;
-    if !verify_credential(auth_hash, password_hash.to_string()).await? {
+    if !state.credentials.verify(&auth_hash, password_hash)? {
         return Err(NivritError::Unauthorized.into());
     }
 
