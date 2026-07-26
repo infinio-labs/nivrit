@@ -10,7 +10,7 @@ use nivrit_auth::{
 };
 use nivrit_core::NivritError;
 use nivrit_db::queries;
-use rand::RngCore;
+use rand::TryRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
@@ -700,7 +700,9 @@ fn decode_b64(input: &str, field: &str) -> ApiResult<Vec<u8>> {
 
 fn generate_secure_token() -> String {
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("operating-system RNG failure");
     STANDARD.encode(bytes)
 }
 

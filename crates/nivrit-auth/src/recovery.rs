@@ -1,11 +1,9 @@
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Key, Nonce,
+    aead::{Aead, KeyInit, Nonce},
+    Aes256Gcm,
 };
 use argon2::{
-    password_hash::{
-        rand_core::RngCore, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
-    },
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
 use nivrit_core::{NivritError, Result};
@@ -15,9 +13,7 @@ const RECOVERY_CODE_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // om
 
 /// Generate a human-friendly recovery code, e.g. "ABCD-EFGH-JKLM-NPQR-STUV-WXYZ".
 pub fn generate_recovery_code() -> String {
-    let mut rng = OsRng;
-    let mut bytes = [0u8; 24];
-    rng.fill_bytes(&mut bytes);
+    let bytes = nivrit_crypto::random_bytes::<24>();
     let chars: String = bytes
         .iter()
         .map(|b| RECOVERY_CODE_ALPHABET[(b % RECOVERY_CODE_ALPHABET.len() as u8) as usize] as char)
@@ -47,7 +43,8 @@ fn normalize_pepper(pepper: Option<&str>) -> Vec<u8> {
 pub fn hash_recovery_code(code: &str, pepper: Option<&str>) -> Result<String> {
     let normalized = normalize_recovery_code(code);
     let with_pepper = [normalize_pepper(pepper).as_slice(), normalized.as_bytes()].concat();
-    let salt = SaltString::generate(&mut OsRng);
+    let salt = SaltString::encode_b64(&nivrit_crypto::random_bytes::<16>())
+        .map_err(|e| NivritError::Internal(e.to_string()))?;
     argon2id()
         .hash_password(&with_pepper, &salt)
         .map(|h| h.to_string())
@@ -81,8 +78,8 @@ fn normalize_recovery_code(code: &str) -> String {
 }
 
 pub fn encrypt_with_key(plaintext: &[u8], key: &[u8; 32]) -> Result<(Vec<u8>, Vec<u8>)> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let cipher = Aes256Gcm::new_from_slice(key).expect("AES-256 key length is fixed at 32 bytes");
+    let nonce = Nonce::<Aes256Gcm>::from(nivrit_crypto::random_bytes::<12>());
     let ciphertext = cipher
         .encrypt(&nonce, plaintext)
         .map_err(|e| NivritError::Crypto(e.to_string()))?;
@@ -90,10 +87,11 @@ pub fn encrypt_with_key(plaintext: &[u8], key: &[u8; 32]) -> Result<(Vec<u8>, Ve
 }
 
 pub fn decrypt_with_key(ciphertext: &[u8], nonce: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Nonce::from_slice(nonce);
+    let cipher = Aes256Gcm::new_from_slice(key).expect("AES-256 key length is fixed at 32 bytes");
+    let nonce = Nonce::<Aes256Gcm>::try_from(nonce)
+        .map_err(|_| NivritError::Crypto("invalid AES-GCM nonce length".into()))?;
     cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|e| NivritError::Crypto(e.to_string()))
 }
 

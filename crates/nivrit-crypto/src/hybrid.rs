@@ -4,7 +4,6 @@ use ml_kem::{
     MlKem768,
 };
 use nivrit_core::{NivritError, Result};
-use rand::rngs::OsRng;
 use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 
@@ -47,7 +46,7 @@ impl std::fmt::Debug for HybridUserKeyPair {
 impl HybridUserKeyPair {
     /// Generate a new hybrid user key pair using the OS RNG.
     pub fn generate() -> Self {
-        let x25519_private = X25519StaticSecret::random_from_rng(OsRng);
+        let x25519_private = X25519StaticSecret::random();
         let x25519_public = X25519PublicKey::from(&x25519_private);
 
         let (dk, ek) = MlKem768::generate_keypair();
@@ -183,7 +182,7 @@ pub fn encapsulate_project_key_hybrid(
     let (recipient_x25519, recipient_ml_kem) = parse_hybrid_public_key(recipient_public_key)?;
 
     // X25519 ephemeral DH.
-    let ephemeral_private = X25519StaticSecret::random_from_rng(OsRng);
+    let ephemeral_private = X25519StaticSecret::random();
     let ephemeral_public = X25519PublicKey::from(&ephemeral_private);
     let x25519_shared = ephemeral_private.diffie_hellman(&recipient_x25519);
 
