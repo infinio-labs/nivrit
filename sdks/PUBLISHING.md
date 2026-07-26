@@ -1,5 +1,11 @@
 # Publishing Nivrit SDKs
 
+> **Scope note.** For the initial open-source release, only the **Node.js SDK** is a
+> supported, published package. The VS Code extension and the Python/Go/Rust/.NET/Java/
+> Ruby/Elixir SDKs are **experimental / community-contributed** and not yet part of the
+> supported surface — see [ROADMAP.md](../ROADMAP.md). Publish those at your own risk
+> until they are graduated to supported.
+
 ## One-shot local packaging
 
 ```bash

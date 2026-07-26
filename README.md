@@ -13,6 +13,32 @@ post-quantum hybrid key exchange, and post-quantum audit-log signatures.
 MVP in place. The CLI and web UI can register users, create orgs/projects/environments,
 and set/get client-side encrypted secrets end-to-end.
 
+> **Scope for the initial open-source release.** Nivrit leads on **post-quantum,
+> zero-knowledge** secret management. To keep that promise credible and maintainable,
+> the first public release centers on the **web UI, CLI, API, and the Node.js SDK**.
+> The VS Code extension and the non-Node SDKs (Python, Go, Rust, .NET, Java, Ruby,
+> Elixir) are **experimental / community-contributed** and not yet part of the
+> supported surface — see [ROADMAP.md](ROADMAP.md).
+
+## How Nivrit differs from Infisical
+
+Infisical is a reference for Nivrit's UX and product shape, but the two are positioned
+differently:
+
+- **Zero-knowledge by default, not as an option.** In Nivrit the server stores *only
+  ciphertext* — plaintext secrets are encrypted in the browser (WASM) / CLI before they
+  ever leave the client. The backend never has the keys or the plaintext.
+- **Post-quantum today.** Key exchange uses a hybrid **X25519 + ML-KEM-768** scheme and
+  audit-log signatures use **ML-DSA-65**. This is built into the core, not a roadmap item.
+- **AGPL-3.0.** The license keeps hosted/modified versions open, so the zero-knowledge
+  claim stays auditable end to end.
+- **Self-host first.** One `docker compose up` runs the whole stack; there is no
+  closed-source hosted tier that diverges from what you can read.
+
+In short: Nivrit is the **post-quantum, zero-knowledge, AGPL** secret manager — Infisical
+is the broader, centrally-stored secret/platform manager. Nivrit is deliberately narrower
+and more private, not a clone.
+
 ## Quick start
 
 ```bash
@@ -55,6 +81,8 @@ For a production-oriented sample, see [`deploy/docker-compose.yml`](deploy/docke
 
 ## Project layout
 
+**Supported surface (initial open-source release):**
+
 - `crates/nivrit-core` — shared domain types and errors
 - `crates/nivrit-crypto` — client-side E2EE primitives
 - `crates/nivrit-db` — SQLx migrations and query layer
@@ -64,12 +92,17 @@ For a production-oriented sample, see [`deploy/docker-compose.yml`](deploy/docke
 - `crates/nivrit-web` — Vite + React dashboard
 - `crates/nivrit-web-crypto` — WASM crypto module
 - `crates/nivrit-crypto-helper` — standalone crypto binary for SDKs
+- `sdks/node` — Node.js SDK (supported)
+
+**Experimental / community-contributed (not yet supported — see [ROADMAP.md](ROADMAP.md)):**
+
 - `extensions/vscode` — VS Code extension
-- `sdks/` — language SDKs (Node.js, Python, Go, Rust, .NET, Java, Ruby, Elixir)
+- `sdks/` — Python, Go, Rust, .NET, Java, Ruby, Elixir SDKs
 
 ## Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) for the E2EE design and threat model.
+See [`ROADMAP.md`](ROADMAP.md) for scope and the release plan.
 
 ## Contributing
 
