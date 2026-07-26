@@ -1,20 +1,15 @@
 //! Post-quantum and hybrid signature support.
 //!
 //! Phase 4 of the Nivrit roadmap evaluates NIST-standardized post-quantum
-//! signature schemes for long-lived audit signatures and non-repudiation:
+//! signature schemes for long-lived audit signatures and non-repudiation.
 //!
-//! - **ML-DSA** (FIPS 204): lattice-based, fast signatures, moderate key sizes.
-//! - **SLH-DSA** (FIPS 205): hash-based, small keys, large signatures, high
-//!   confidence.
+//! For operational continuity, a hybrid mode combining an ECDSA/P-256 or
+//! Ed25519 classical signature with an ML-DSA signature is the recommended
+//! deployment pattern until PQ algorithms have broad ecosystem support.
 //!
-//! For operational continuity a hybrid mode combining an ECDSA/P-256 or
-//! Ed25519 classical signature with an ML-DSA/SLH-DSA PQ signature is the
-//! recommended deployment pattern until PQ algorithms have broad ecosystem
-//! support.
-//!
-//! This module provides concrete ML-DSA-65/87 and SLH-DSA-SHA2-128s/256s
-//! implementations behind the `pq-signatures` feature. Ed25519/ECDSA and
-//! other parameter sets can be added behind the same trait boundary.
+//! This module provides concrete ML-DSA-65/87 implementations behind the
+//! `pq-signatures` feature. Ed25519/ECDSA and other parameter sets can be added
+//! behind the same trait boundary.
 
 use nivrit_core::{NivritError, Result};
 
@@ -23,11 +18,6 @@ use ml_dsa::{
     Generate as _, KeyExport as _, Keypair as _, SignatureEncoding as _,
     Signer as MlDsaSignerTrait, Verifier as MlDsaVerifierTrait,
 };
-#[cfg(feature = "pq-signatures")]
-use pqcrypto_sphincsplus::{sphincssha2128ssimple, sphincssha2256ssimple};
-#[cfg(feature = "pq-signatures")]
-use pqcrypto_traits::sign::{DetachedSignature as _, PublicKey as _, VerificationError};
-
 /// Supported signature schemes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignatureAlgorithm {
@@ -39,10 +29,6 @@ pub enum SignatureAlgorithm {
     MlDsa65,
     /// ML-DSA-87 (higher security level).
     MlDsa87,
-    /// SLH-DSA-SHA2-128s (hash-based, conservative).
-    SlhDsaSha2_128s,
-    /// SLH-DSA-SHA2-256s (higher security level).
-    SlhDsaSha2_256s,
 }
 
 impl SignatureAlgorithm {
@@ -52,8 +38,6 @@ impl SignatureAlgorithm {
             SignatureAlgorithm::EcdsaP256 => "ecdsa-p256",
             SignatureAlgorithm::MlDsa65 => "ml-dsa-65",
             SignatureAlgorithm::MlDsa87 => "ml-dsa-87",
-            SignatureAlgorithm::SlhDsaSha2_128s => "slh-dsa-sha2-128s",
-            SignatureAlgorithm::SlhDsaSha2_256s => "slh-dsa-sha2-256s",
         }
     }
 }
@@ -67,8 +51,6 @@ impl std::str::FromStr for SignatureAlgorithm {
             "ecdsa-p256" => Ok(SignatureAlgorithm::EcdsaP256),
             "ml-dsa-65" => Ok(SignatureAlgorithm::MlDsa65),
             "ml-dsa-87" => Ok(SignatureAlgorithm::MlDsa87),
-            "slh-dsa-sha2-128s" => Ok(SignatureAlgorithm::SlhDsaSha2_128s),
-            "slh-dsa-sha2-256s" => Ok(SignatureAlgorithm::SlhDsaSha2_256s),
             _ => Err(NivritError::Crypto(format!(
                 "unknown signature algorithm: {s}"
             ))),
@@ -195,157 +177,6 @@ mod ml_dsa_impl {
 #[cfg(feature = "pq-signatures")]
 pub use ml_dsa_impl::{MlDsa65Signer, MlDsa65Verifier, MlDsa87Signer, MlDsa87Verifier};
 
-// ============================================================================
-// SLH-DSA
-// ============================================================================
-
-#[cfg(feature = "pq-signatures")]
-mod slh_dsa_impl {
-    use super::*;
-
-    fn slh_verify_error(alg: &str, e: VerificationError) -> NivritError {
-        let reason = match e {
-            VerificationError::InvalidSignature => "invalid signature",
-            VerificationError::UnknownVerificationError => "unknown verification error",
-            _ => "verification error",
-        };
-        NivritError::Crypto(format!("{alg} verify failed: {reason}"))
-    }
-
-    // ------------------------------------------------------------------------
-    // SLH-DSA-SHA2-128s
-    // ------------------------------------------------------------------------
-
-    pub struct SlhDsaSha2_128sSigner {
-        secret_key: sphincssha2128ssimple::SecretKey,
-        public_key: sphincssha2128ssimple::PublicKey,
-    }
-
-    impl SlhDsaSha2_128sSigner {
-        pub fn generate() -> Self {
-            let (pk, sk) = sphincssha2128ssimple::keypair();
-            Self {
-                secret_key: sk,
-                public_key: pk,
-            }
-        }
-
-        pub fn verifier(&self) -> SlhDsaSha2_128sVerifier {
-            SlhDsaSha2_128sVerifier {
-                public_key: self.public_key,
-            }
-        }
-    }
-
-    impl Signer for SlhDsaSha2_128sSigner {
-        fn algorithm(&self) -> SignatureAlgorithm {
-            SignatureAlgorithm::SlhDsaSha2_128s
-        }
-
-        fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
-            let sig = sphincssha2128ssimple::detached_sign(message, &self.secret_key);
-            Ok(sig.as_bytes().to_vec())
-        }
-
-        fn public_key(&self) -> Result<Vec<u8>> {
-            Ok(self.public_key.as_bytes().to_vec())
-        }
-    }
-
-    pub struct SlhDsaSha2_128sVerifier {
-        public_key: sphincssha2128ssimple::PublicKey,
-    }
-
-    impl SlhDsaSha2_128sVerifier {
-        pub fn from_public_key(bytes: &[u8]) -> Result<Self> {
-            let pk = sphincssha2128ssimple::PublicKey::from_bytes(bytes).map_err(|_| {
-                NivritError::Crypto("invalid slh-dsa-sha2-128s public key length".into())
-            })?;
-            Ok(Self { public_key: pk })
-        }
-    }
-
-    impl Verifier for SlhDsaSha2_128sVerifier {
-        fn verify(&self, message: &[u8], signature: &[u8]) -> Result<()> {
-            let sig =
-                sphincssha2128ssimple::DetachedSignature::from_bytes(signature).map_err(|_| {
-                    NivritError::Crypto("invalid slh-dsa-sha2-128s signature length".into())
-                })?;
-            sphincssha2128ssimple::verify_detached_signature(&sig, message, &self.public_key)
-                .map_err(|e| slh_verify_error("slh-dsa-sha2-128s", e))
-        }
-    }
-
-    // ------------------------------------------------------------------------
-    // SLH-DSA-SHA2-256s
-    // ------------------------------------------------------------------------
-
-    pub struct SlhDsaSha2_256sSigner {
-        secret_key: sphincssha2256ssimple::SecretKey,
-        public_key: sphincssha2256ssimple::PublicKey,
-    }
-
-    impl SlhDsaSha2_256sSigner {
-        pub fn generate() -> Self {
-            let (pk, sk) = sphincssha2256ssimple::keypair();
-            Self {
-                secret_key: sk,
-                public_key: pk,
-            }
-        }
-
-        pub fn verifier(&self) -> SlhDsaSha2_256sVerifier {
-            SlhDsaSha2_256sVerifier {
-                public_key: self.public_key,
-            }
-        }
-    }
-
-    impl Signer for SlhDsaSha2_256sSigner {
-        fn algorithm(&self) -> SignatureAlgorithm {
-            SignatureAlgorithm::SlhDsaSha2_256s
-        }
-
-        fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
-            let sig = sphincssha2256ssimple::detached_sign(message, &self.secret_key);
-            Ok(sig.as_bytes().to_vec())
-        }
-
-        fn public_key(&self) -> Result<Vec<u8>> {
-            Ok(self.public_key.as_bytes().to_vec())
-        }
-    }
-
-    pub struct SlhDsaSha2_256sVerifier {
-        public_key: sphincssha2256ssimple::PublicKey,
-    }
-
-    impl SlhDsaSha2_256sVerifier {
-        pub fn from_public_key(bytes: &[u8]) -> Result<Self> {
-            let pk = sphincssha2256ssimple::PublicKey::from_bytes(bytes).map_err(|_| {
-                NivritError::Crypto("invalid slh-dsa-sha2-256s public key length".into())
-            })?;
-            Ok(Self { public_key: pk })
-        }
-    }
-
-    impl Verifier for SlhDsaSha2_256sVerifier {
-        fn verify(&self, message: &[u8], signature: &[u8]) -> Result<()> {
-            let sig =
-                sphincssha2256ssimple::DetachedSignature::from_bytes(signature).map_err(|_| {
-                    NivritError::Crypto("invalid slh-dsa-sha2-256s signature length".into())
-                })?;
-            sphincssha2256ssimple::verify_detached_signature(&sig, message, &self.public_key)
-                .map_err(|e| slh_verify_error("slh-dsa-sha2-256s", e))
-        }
-    }
-}
-
-#[cfg(feature = "pq-signatures")]
-pub use slh_dsa_impl::{
-    SlhDsaSha2_128sSigner, SlhDsaSha2_128sVerifier, SlhDsaSha2_256sSigner, SlhDsaSha2_256sVerifier,
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,8 +188,6 @@ mod tests {
             SignatureAlgorithm::EcdsaP256,
             SignatureAlgorithm::MlDsa65,
             SignatureAlgorithm::MlDsa87,
-            SignatureAlgorithm::SlhDsaSha2_128s,
-            SignatureAlgorithm::SlhDsaSha2_256s,
         ] {
             assert_eq!(alg.as_str().parse::<SignatureAlgorithm>().unwrap(), alg);
         }
@@ -367,6 +196,8 @@ mod tests {
     #[test]
     fn unknown_algorithm_errors() {
         assert!("rsa-pss".parse::<SignatureAlgorithm>().is_err());
+        assert!("slh-dsa-sha2-128s".parse::<SignatureAlgorithm>().is_err());
+        assert!("slh-dsa-sha2-256s".parse::<SignatureAlgorithm>().is_err());
     }
 
     #[test]
@@ -394,35 +225,6 @@ mod tests {
         let signer = MlDsa87Signer::generate();
         let verifier = signer.verifier();
         let msg = b"hello ml-dsa-87";
-        let sig = signer.sign(msg).unwrap();
-        verifier.verify(msg, &sig).unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "pq-signatures")]
-    fn slh_dsa_sha2_128s_sign_verify_roundtrip() {
-        let signer = SlhDsaSha2_128sSigner::generate();
-        let verifier = signer.verifier();
-        let msg = b"hello sphincs+";
-        let sig = signer.sign(msg).unwrap();
-        verifier.verify(msg, &sig).unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "pq-signatures")]
-    fn slh_dsa_sha2_128s_wrong_message_fails() {
-        let signer = SlhDsaSha2_128sSigner::generate();
-        let verifier = signer.verifier();
-        let sig = signer.sign(b"hello").unwrap();
-        assert!(verifier.verify(b"world", &sig).is_err());
-    }
-
-    #[test]
-    #[cfg(feature = "pq-signatures")]
-    fn slh_dsa_sha2_256s_sign_verify_roundtrip() {
-        let signer = SlhDsaSha2_256sSigner::generate();
-        let verifier = signer.verifier();
-        let msg = b"hello sphincs+ 256s";
         let sig = signer.sign(msg).unwrap();
         verifier.verify(msg, &sig).unwrap();
     }
