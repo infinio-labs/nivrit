@@ -53,12 +53,12 @@ jobs:
 
       - name: Clippy
         # wasm-bindgen crate is excluded; it targets wasm32, not the host.
-        run: cargo clippy --workspace --exclude nivrit-web-crypto --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --exclude nivrit-web-crypto --all-targets -- -D warnings
 
       - name: Tests (unit + db integration)
         # nivrit-sdk is excluded: its only test is an e2e smoke needing a live
         # API server, which the sdks.yml workflow covers.
-        run: cargo test --workspace --exclude nivrit-web-crypto --exclude nivrit-sdk
+        run: cargo test --locked --workspace --exclude nivrit-web-crypto --exclude nivrit-sdk
 
   frontend:
     name: web typecheck / tests

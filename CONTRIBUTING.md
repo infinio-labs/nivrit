@@ -6,12 +6,13 @@ development environment, run tests, and submit changes.
 ## Development setup
 
 1. Install the toolchains:
-   - [Rust](https://rustup.rs/) (see `rust-version` in `Cargo.toml`)
-   - [Bun](https://bun.sh/) (latest stable) — used for all TypeScript/JavaScript
+   - [Rust](https://rustup.rs/) 1.97.1 (see `rust-version` in `Cargo.toml`)
+   - [Bun](https://bun.sh/) 1.3.14 — used for all TypeScript/JavaScript
      projects (web UI, VS Code extension, Node.js SDK)
    - Docker + Docker Compose (for Postgres)
    - `sqlx-cli` (`cargo install sqlx-cli --version '=0.9.0' --locked --no-default-features --features native-tls,postgres`)
-   - `wasm-pack` (optional; only needed to rebuild the web WASM module)
+   - `wasm-pack` 0.14.0 (`cargo install wasm-pack --version '=0.14.0' --locked`;
+     optional, only needed to rebuild the web WASM module)
 
 2. Clone the repository and configure the environment:
    ```bash
@@ -40,7 +41,7 @@ development environment, run tests, and submit changes.
 Run the Rust unit and integration tests (requires the running Postgres container):
 
 ```bash
-cargo test --workspace --exclude nivrit-web-crypto --exclude nivrit-sdk
+cargo test --locked --workspace --exclude nivrit-web-crypto --exclude nivrit-sdk
 ```
 
 For the web frontend:
@@ -56,14 +57,14 @@ For the Node.js SDK:
 
 ```bash
 cd sdks/node
-bun install
+bun install --frozen-lockfile
 bun test
 ```
 
 ## Code style
 
 - Format Rust with `cargo fmt`.
-- Lint Rust with `cargo clippy --workspace --exclude nivrit-web-crypto --all-targets -- -D warnings`.
+- Lint Rust with `cargo clippy --locked --workspace --exclude nivrit-web-crypto --all-targets -- -D warnings`.
 - The TypeScript/JavaScript projects use bun; run `bun run typecheck` for type checking.
 - Keep changes focused. One logical change per pull request.
 

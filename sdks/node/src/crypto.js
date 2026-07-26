@@ -17,7 +17,7 @@ function findHelper() {
   }
   throw new Error(
     'nivrit-crypto-helper not found. Reinstall @nivrit/sdk on a supported platform, ' +
-    'set NIVRIT_CRYPTO_HELPER, or run `cargo build --release -p nivrit-crypto-helper`.'
+    'set NIVRIT_CRYPTO_HELPER, or run `cargo build --locked --release -p nivrit-crypto-helper`.'
   );
 }
 

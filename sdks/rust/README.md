@@ -24,5 +24,5 @@ The Rust SDK uses the `nivrit-crypto` crate directly, so no external helper bina
 ## Test
 
 ```bash
-cargo test -p nivrit-sdk --test smoke -- --nocapture
+cargo test --locked -p nivrit-sdk --test smoke -- --nocapture
 ```

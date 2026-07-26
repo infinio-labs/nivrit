@@ -21,20 +21,20 @@ migrate-new name:
 
 # Run the API server
 dev-api:
-    cargo run -p nivrit-api
+    cargo run --locked -p nivrit-api
 
 # Run the CLI
 cmd *args:
-    cargo run -p nivrit-cli -- {{args}}
+    cargo run --locked -p nivrit-cli -- {{args}}
 
 # Run all tests
 test:
-    cargo test --workspace
+    cargo test --locked --workspace
 
 # Check formatting and linting
 check:
     cargo fmt --check
-    cargo clippy --workspace --all-targets --all-features
+    cargo clippy --locked --workspace --all-targets --all-features
 
 # Format code
 fmt:
@@ -42,7 +42,7 @@ fmt:
 
 # Install web UI dependencies
 install-web:
-    cd crates/nivrit-web && bun install
+    cd crates/nivrit-web && bun install --frozen-lockfile
 
 # Run the web UI dev server
 dev-web:

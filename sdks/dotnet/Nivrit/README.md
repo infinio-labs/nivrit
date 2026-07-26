@@ -21,5 +21,6 @@ The SDK expects the `nivrit-crypto-helper` binary on `PATH` or at `NIVRIT_CRYPTO
 
 ```bash
 cd sdks/dotnet/Nivrit
-dotnet pack -c Release
+dotnet restore --locked-mode
+dotnet pack -c Release --no-restore
 ```

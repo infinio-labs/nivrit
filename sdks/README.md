@@ -26,7 +26,7 @@ Argon2id, X25519, ML-KEM-768, and AES-256-GCM.
 Build it from the workspace root:
 
 ```bash
-cargo build --release -p nivrit-crypto-helper
+cargo build --locked --release -p nivrit-crypto-helper
 ```
 
 The SDKs look for it at `../../target/release/nivrit-crypto-helper` relative to
@@ -50,6 +50,6 @@ at `http://localhost:4000`. Start the API, then:
 ```bash
 cd sdks/node && node test/smoke.js
 cd sdks/python && PYTHONPATH=. python3 tests/test_smoke.py
-cd sdks/go/nivrit && go test -v -run TestSmoke ./...
-cd ../.. && cargo test -p nivrit-sdk --test smoke -- --nocapture
+cd sdks/go/nivrit && go test -mod=readonly -v -run TestSmoke ./...
+cd ../.. && cargo test --locked -p nivrit-sdk --test smoke -- --nocapture
 ```

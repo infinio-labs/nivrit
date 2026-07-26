@@ -43,8 +43,8 @@ Requires `TWINE_USERNAME`/`TWINE_PASSWORD` or a `~/.pypirc`.
 `nivrit-sdk` depends on `nivrit-crypto`, so publish the crypto crate first:
 
 ```bash
-cargo publish -p nivrit-crypto
-cargo publish -p nivrit-sdk
+cargo publish --locked -p nivrit-crypto
+cargo publish --locked -p nivrit-sdk
 ```
 
 Requires `CARGO_REGISTRY_TOKEN`.
@@ -62,7 +62,8 @@ git push origin sdks/go/nivrit/v0.1.0
 
 ```bash
 cd sdks/dotnet/Nivrit
-dotnet pack -c Release -o ../../../sdks/dist
+dotnet restore --locked-mode
+dotnet pack -c Release --no-restore -o ../../../sdks/dist
 dotnet nuget push ../../../sdks/dist/Nivrit.Sdk.*.nupkg --api-key $NUGET_API_KEY --source https://api.nuget.org/v3/index.json
 ```
 
@@ -89,7 +90,7 @@ Requires `GEM_HOST_API_KEY`.
 
 ```bash
 cd sdks/elixir
-mix deps.get
+mix deps.get --check-locked
 mix hex.publish
 ```
 
