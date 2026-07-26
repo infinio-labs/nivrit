@@ -124,7 +124,7 @@ jobs:
 
       - name: Setup Node
         if: matrix.sdk == 'node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -270,7 +270,7 @@ jobs:
 
       - name: Setup Node
         if: matrix.sdk == 'node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
