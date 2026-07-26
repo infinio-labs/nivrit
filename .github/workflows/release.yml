@@ -163,7 +163,7 @@ jobs:
       # Python -> PyPI: 5 platform wheels via trusted publishing (OIDC)
       - name: Setup Python
         if: matrix.sdk == 'python'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Build Python wheels
