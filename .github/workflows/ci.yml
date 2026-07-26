@@ -1,5 +1,7 @@
 name: CI
 
+# Private-repo jobs use the Linux x64 self-hosted runner. Making the repository
+# public automatically switches them back to GitHub-hosted runners.
 on:
   push:
     branches: [main]
@@ -12,7 +14,7 @@ env:
 jobs:
   test:
     name: fmt / clippy / tests
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     services:
       postgres:
         image: postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
@@ -21,7 +23,7 @@ jobs:
           POSTGRES_PASSWORD: nivrit
           POSTGRES_DB: nivrit
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -29,7 +31,7 @@ jobs:
           --health-retries 5
     env:
       # sqlx verifies query macros against this live database at compile time.
-      DATABASE_URL: postgres://nivrit:nivrit@localhost:5432/nivrit
+      DATABASE_URL: postgres://nivrit:nivrit@localhost:55432/nivrit
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -62,7 +64,7 @@ jobs:
 
   frontend:
     name: web typecheck / tests
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -85,7 +87,7 @@ jobs:
 
   audit:
     name: cargo audit
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable

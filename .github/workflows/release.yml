@@ -1,5 +1,7 @@
 name: Release
 
+# Private-repo jobs use the Linux x64 self-hosted runner. Making the repository
+# public restores the full GitHub-hosted platform matrix automatically.
 # Tag-triggered release. The tag (e.g. v0.1.0) must match the version already
 # committed in every SDK manifest and the workspace Cargo.toml — this workflow
 # publishes, it does not bump. Cut a "bump versions" commit first, then tag.
@@ -27,12 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-24.04,  asset: nivrit-crypto-helper-linux-x86_64 }
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04,  asset: nivrit-crypto-helper-linux-aarch64 }
-          - { target: x86_64-apple-darwin,       os: macos-15,   asset: nivrit-crypto-helper-darwin-x86_64 }
-          - { target: aarch64-apple-darwin,      os: macos-15,   asset: nivrit-crypto-helper-darwin-arm64 }
-          - { target: x86_64-pc-windows-msvc,    os: windows-2025, asset: nivrit-crypto-helper-windows-x86_64.exe }
+        include: ${{ fromJSON(github.event.repository.private && '[{"target":"x86_64-unknown-linux-gnu","os":"self-hosted","asset":"nivrit-crypto-helper-linux-x86_64"}]' || '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"nivrit-crypto-helper-linux-x86_64"},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"nivrit-crypto-helper-linux-aarch64"},{"target":"x86_64-apple-darwin","os":"macos-15","asset":"nivrit-crypto-helper-darwin-x86_64"},{"target":"aarch64-apple-darwin","os":"macos-15","asset":"nivrit-crypto-helper-darwin-arm64"},{"target":"x86_64-pc-windows-msvc","os":"windows-2025","asset":"nivrit-crypto-helper-windows-x86_64.exe"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -62,12 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-24.04,  asset: niv-linux-x86_64 }
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04,  asset: niv-linux-aarch64 }
-          - { target: x86_64-apple-darwin,       os: macos-15,   asset: niv-darwin-x86_64 }
-          - { target: aarch64-apple-darwin,      os: macos-15,   asset: niv-darwin-arm64 }
-          - { target: x86_64-pc-windows-msvc,    os: windows-2025, asset: niv-windows-x86_64.exe }
+        include: ${{ fromJSON(github.event.repository.private && '[{"target":"x86_64-unknown-linux-gnu","os":"self-hosted","asset":"niv-linux-x86_64"}]' || '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"niv-linux-x86_64"},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"niv-linux-aarch64"},{"target":"x86_64-apple-darwin","os":"macos-15","asset":"niv-darwin-x86_64"},{"target":"aarch64-apple-darwin","os":"macos-15","asset":"niv-darwin-arm64"},{"target":"x86_64-pc-windows-msvc","os":"windows-2025","asset":"niv-windows-x86_64.exe"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -105,7 +97,7 @@ jobs:
   # ---- GitHub Release with helper + CLI binaries attached --------------------
   github-release:
     name: GitHub Release
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     needs: [build-helper, build-cli]
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -127,6 +119,7 @@ jobs:
   # ---- Publish the registry SDKs (helper bundled per ecosystem) --------------
   publish-sdks:
     name: Publish ${{ matrix.sdk }}
+    if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     needs: build-helper
     strategy:
@@ -273,6 +266,7 @@ jobs:
   # crates.io. If not, add them ahead of this in dependency order, or this fails.
   publish-rust:
     name: Publish Rust (crates.io)
+    if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -289,7 +283,7 @@ jobs:
   # ---- Container images -> GHCR ----------------------------------------------
   docker:
     name: Image (${{ matrix.image }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:

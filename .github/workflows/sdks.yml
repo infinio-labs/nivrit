@@ -1,5 +1,7 @@
 name: SDKs
 
+# Private-repo jobs use the Linux x64 self-hosted runner. Making the repository
+# public restores the full GitHub-hosted platform matrix automatically.
 on:
   push:
     branches: [main]
@@ -28,22 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-            asset: nivrit-crypto-helper-linux-x86_64
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-            asset: nivrit-crypto-helper-linux-aarch64
-          - target: x86_64-apple-darwin
-            os: macos-15
-            asset: nivrit-crypto-helper-darwin-x86_64
-          - target: aarch64-apple-darwin
-            os: macos-15
-            asset: nivrit-crypto-helper-darwin-arm64
-          - target: x86_64-pc-windows-msvc
-            os: windows-2025
-            asset: nivrit-crypto-helper-windows-x86_64.exe
+        include: ${{ fromJSON(github.event.repository.private && '[{"target":"x86_64-unknown-linux-gnu","os":"self-hosted","asset":"nivrit-crypto-helper-linux-x86_64"}]' || '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"nivrit-crypto-helper-linux-x86_64"},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"nivrit-crypto-helper-linux-aarch64"},{"target":"x86_64-apple-darwin","os":"macos-15","asset":"nivrit-crypto-helper-darwin-x86_64"},{"target":"aarch64-apple-darwin","os":"macos-15","asset":"nivrit-crypto-helper-darwin-arm64"},{"target":"x86_64-pc-windows-msvc","os":"windows-2025","asset":"nivrit-crypto-helper-windows-x86_64.exe"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -77,8 +64,10 @@ jobs:
 
   smoke-tests:
     name: Smoke tests (${{ matrix.sdk }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     needs: build-helper
+    env:
+      DATABASE_URL: postgres://nivrit:nivrit@localhost:55432/nivrit
     strategy:
       fail-fast: false
       matrix:
@@ -91,7 +80,7 @@ jobs:
           POSTGRES_PASSWORD: nivrit
           POSTGRES_DB: nivrit
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -109,6 +98,13 @@ jobs:
         with:
           shared-key: nivrit-api
 
+      - uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2
+        with:
+          tool: sqlx-cli@0.9.0
+
+      - name: Run migrations
+        run: sqlx migrate run --source crates/nivrit-db/migrations
+
       - name: Download helper
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -120,7 +116,6 @@ jobs:
 
       - name: Start API
         run: |
-          export DATABASE_URL=postgres://nivrit:nivrit@localhost:5432/nivrit
           cd crates/nivrit-api
           cargo run --locked --release > "$RUNNER_TEMP/nivrit-api.log" 2>&1 &
           api_pid=$!
@@ -184,7 +179,7 @@ jobs:
   # bug). Faster than the e2e smoke job and isolates the crypto contract.
   crypto-parity:
     name: SDK crypto parity (${{ matrix.sdk }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     needs: build-helper
     strategy:
       fail-fast: false
@@ -224,6 +219,12 @@ jobs:
           otp-version: '29.0.3'
           elixir-version: '1.20.2'
 
+      - name: Setup Ruby
+        if: matrix.sdk == 'ruby'
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '4.0.6'
+
       - name: Ruby crypto test
         if: matrix.sdk == 'ruby'
         working-directory: sdks/ruby
@@ -255,6 +256,7 @@ jobs:
   # the helper via env/dev path and never exercise it.
   packaged-install:
     name: Packaged install (${{ matrix.sdk }})
+    if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     needs: build-helper
     strategy:
