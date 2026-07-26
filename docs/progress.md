@@ -105,8 +105,8 @@ This document captures the implementation progress across all roadmap phases, te
 ```bash
 # Rust workspace (native tests; wasm32 tests run separately via wasm-pack)
 cargo check --workspace
-cargo clippy --workspace --exclude nivrit-web-crypto -- -D warnings
-cargo test --workspace --exclude nivrit-web-crypto
+cargo clippy --locked --workspace --exclude nivrit-web-crypto -- -D warnings
+cargo test --locked --workspace --exclude nivrit-web-crypto
 cargo fmt --all
 
 # SQLx offline build (no live DB required)

@@ -6,7 +6,7 @@ defmodule Nivrit.CryptoTest do
   # `:stdin` option, which System.cmd silently ignored) makes every call raise
   # because the helper reads empty input.
   #
-  # Build the helper first (cargo build --release -p nivrit-crypto-helper) or set
+  # Build the helper first (cargo build --locked --release -p nivrit-crypto-helper) or set
   # NIVRIT_CRYPTO_HELPER to its path.
 
   setup do

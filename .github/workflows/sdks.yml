@@ -64,7 +64,7 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu=4:13.2.0-7ubuntu1
 
       - name: Build helper
-        run: cargo build --release -p nivrit-crypto-helper --target ${{ matrix.target }}
+        run: cargo build --locked --release -p nivrit-crypto-helper --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
@@ -122,7 +122,7 @@ jobs:
         run: |
           export DATABASE_URL=postgres://nivrit:nivrit@localhost:5432/nivrit
           cd crates/nivrit-api
-          cargo run --release > "$RUNNER_TEMP/nivrit-api.log" 2>&1 &
+          cargo run --locked --release > "$RUNNER_TEMP/nivrit-api.log" 2>&1 &
           api_pid=$!
           for _ in {1..600}; do
             if curl -fsS http://localhost:4000/health >/dev/null 2>&1; then
@@ -172,11 +172,11 @@ jobs:
         if: matrix.sdk == 'go'
         run: |
           cd sdks/go/nivrit
-          go test -v -run TestSmoke ./...
+          go test -mod=readonly -v -run TestSmoke ./...
 
       - name: Run Rust smoke test
         if: matrix.sdk == 'rust'
-        run: cargo test -p nivrit-sdk --test smoke -- --nocapture
+        run: cargo test --locked -p nivrit-sdk --test smoke -- --nocapture
 
   # Hermetic crypto round-trips for the SDKs the smoke matrix doesn't cover.
   # No API/DB: each test drives its wrapper against the helper binary directly,
@@ -245,7 +245,7 @@ jobs:
         run: |
           mix local.hex "$HEX_VERSION" --force
           mix local.rebar rebar3 "$REBAR3_URL" --sha512 "$REBAR3_SHA512" --force
-          mix deps.get
+          mix deps.get --check-locked
           mix test test/crypto_test.exs
 
   # Regression for PACKAGED resolution: builds each SDK's distributable with the
@@ -360,7 +360,7 @@ jobs:
         run: |
           cp -r ../../../helpers .
           bash scripts/embed-helpers.sh
-          env -u NIVRIT_CRYPTO_HELPER go test -v -run TestBundledHelper ./...
+          env -u NIVRIT_CRYPTO_HELPER go test -mod=readonly -v -run TestBundledHelper ./...
 
       - name: Ruby fat gem
         if: matrix.sdk == 'ruby'
@@ -399,5 +399,5 @@ jobs:
           bash build-priv.sh
           mix local.hex "$HEX_VERSION" --force
           mix local.rebar rebar3 "$REBAR3_URL" --sha512 "$REBAR3_SHA512" --force
-          mix deps.get
+          mix deps.get --check-locked
           env -u NIVRIT_CRYPTO_HELPER mix test test/crypto_test.exs

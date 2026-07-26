@@ -25,7 +25,7 @@ class HelperCrypto:
                 return str(c)
         raise FileNotFoundError(
             "nivrit-crypto-helper not found. Install the platform wheel, set "
-            "NIVRIT_CRYPTO_HELPER, or run `cargo build --release -p nivrit-crypto-helper`."
+            "NIVRIT_CRYPTO_HELPER, or run `cargo build --locked --release -p nivrit-crypto-helper`."
         )
 
     def _call(self, req: dict[str, Any]) -> Any:

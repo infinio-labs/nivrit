@@ -21,5 +21,5 @@ The SDK expects the `nivrit-crypto-helper` binary on `PATH` or at `NIVRIT_CRYPTO
 ## Test
 
 ```bash
-go test -v -run TestSmoke ./...
+go test -mod=readonly -v -run TestSmoke ./...
 ```

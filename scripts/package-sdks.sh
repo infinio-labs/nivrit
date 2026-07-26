@@ -25,7 +25,7 @@ echo "=== Packaging Rust SDK ==="
 cd "$ROOT_DIR"
 if command -v cargo >/dev/null 2>&1; then
   # Note: publishing to crates.io requires nivrit-crypto to be published first.
-  cargo build -p nivrit-sdk --release
+  cargo build -p nivrit-sdk --release --locked
 else
   echo "cargo not found; skipping Rust package"
 fi
@@ -33,7 +33,7 @@ fi
 echo "=== Packaging Go SDK ==="
 cd "$ROOT_DIR/sdks/go/nivrit"
 if command -v go >/dev/null 2>&1; then
-  go build ./...
+  go build -mod=readonly ./...
 else
   echo "go not found; skipping Go build"
 fi
@@ -41,7 +41,8 @@ fi
 echo "=== Packaging .NET SDK ==="
 cd "$ROOT_DIR/sdks/dotnet/Nivrit"
 if command -v dotnet >/dev/null 2>&1; then
-  dotnet pack -c Release -o "$OUT_DIR"
+  dotnet restore --locked-mode
+  dotnet pack -c Release --no-restore -o "$OUT_DIR"
 else
   echo "dotnet not found; skipping .NET package"
 fi
@@ -67,7 +68,7 @@ fi
 echo "=== Packaging Elixir SDK ==="
 cd "$ROOT_DIR/sdks/elixir"
 if command -v mix >/dev/null 2>&1; then
-  mix deps.get
+  mix deps.get --check-locked
   mix hex.build
 else
   echo "mix not found; skipping Elixir package"
