@@ -31,8 +31,11 @@ pqcrypto-sphincsplus = { version = "0.7.2", optional = true }
 pqcrypto-traits = { version = "0.3.5", optional = true }
 
 # Cloud KMS KEK backends (optional).
-aws-config = { version = "1.8.18", optional = true }
-aws-sdk-kms = { version = "1.111.0", optional = true }
+aws-config = { version = "1.10.1", optional = true }
+aws-sdk-kms = { version = "1.114.0", default-features = false, features = [
+    "default-https-client",
+    "rt-tokio",
+], optional = true }
 azure_identity = { version = "1.0.0", optional = true }
 azure_core = { version = "1.0.0", optional = true }
 azure_security_keyvault_keys = { version = "1.0.0", optional = true }
