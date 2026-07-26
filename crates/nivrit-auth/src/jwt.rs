@@ -77,6 +77,32 @@ mod tests {
     }
 
     #[test]
+    fn hs256_wire_format_is_stable() {
+        let claims = Claims {
+            sub: Uuid::from_u128(1),
+            email: "compat@example.com".into(),
+            exp: 4_102_444_800,
+            iat: 1_704_067_200,
+            mfa_pending: false,
+        };
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(b"compatibility-secret"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            token,
+            "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.\
+             eyJzdWIiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDEiLCJlbWFpbCI6\
+             ImNvbXBhdEBleGFtcGxlLmNvbSIsImV4cCI6NDEwMjQ0NDgwMCwiaWF0IjoxNzA0MDY3MjAwLCJt\
+             ZmFfcGVuZGluZyI6ZmFsc2V9.\
+             ki_M-CaXtVYBCinaLlzjpk18XAx4S7H6xFx8Nn8E8hU"
+        );
+    }
+
+    #[test]
     fn verify_rejects_tampered_token() {
         let config = test_config(3600);
         let token = config
