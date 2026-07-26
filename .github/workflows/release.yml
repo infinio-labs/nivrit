@@ -45,7 +45,7 @@ jobs:
         run: cargo build --release -p nivrit-crypto-helper --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: target/${{ matrix.target }}/release/nivrit-crypto-helper*
@@ -88,7 +88,7 @@ jobs:
           else
             cp "target/${{ matrix.target }}/release/niv" "out/${{ matrix.asset }}"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: out/${{ matrix.asset }}
