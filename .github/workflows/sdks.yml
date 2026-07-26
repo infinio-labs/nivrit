@@ -27,29 +27,30 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04
             asset: nivrit-crypto-helper-linux-x86_64
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04
             asset: nivrit-crypto-helper-linux-aarch64
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-15
             asset: nivrit-crypto-helper-darwin-x86_64
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-15
             asset: nivrit-crypto-helper-darwin-arm64
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
+            os: windows-2025
             asset: nivrit-crypto-helper-windows-x86_64.exe
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
+          toolchain: 1.97.1
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: nivrit-crypto-helper-${{ matrix.target }}
 
@@ -57,7 +58,7 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu=4:13.2.0-7ubuntu1
 
       - name: Build helper
         run: cargo build --release -p nivrit-crypto-helper --target ${{ matrix.target }}
@@ -65,7 +66,7 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.asset }}
           path: target/${{ matrix.target }}/release/nivrit-crypto-helper*
@@ -73,7 +74,7 @@ jobs:
 
   smoke-tests:
     name: Smoke tests (${{ matrix.sdk }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-helper
     strategy:
       fail-fast: false
@@ -81,7 +82,7 @@ jobs:
         sdk: [node, python, go, rust]
     services:
       postgres:
-        image: postgres:17
+        image: postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
         env:
           POSTGRES_USER: nivrit
           POSTGRES_PASSWORD: nivrit
@@ -94,17 +95,19 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.97.1
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: nivrit-api
 
       - name: Download helper
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nivrit-crypto-helper-linux-x86_64
           path: target/release
@@ -118,7 +121,7 @@ jobs:
           cd crates/nivrit-api
           cargo run --release > "$RUNNER_TEMP/nivrit-api.log" 2>&1 &
           api_pid=$!
-          for i in {1..600}; do
+          for _ in {1..600}; do
             if curl -fsS http://localhost:4000/health >/dev/null 2>&1; then
               exit 0
             fi
@@ -134,21 +137,21 @@ jobs:
 
       - name: Setup Node
         if: matrix.sdk == 'node'
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: '24.18.0'
 
       - name: Setup Python
         if: matrix.sdk == 'python'
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
       - name: Setup Go
         if: matrix.sdk == 'go'
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.25'
+          go-version: '1.26.5'
 
       - name: Run Node smoke test
         if: matrix.sdk == 'node'
@@ -178,17 +181,17 @@ jobs:
   # bug). Faster than the e2e smoke job and isolates the crypto contract.
   crypto-parity:
     name: SDK crypto parity (${{ matrix.sdk }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-helper
     strategy:
       fail-fast: false
       matrix:
         sdk: [ruby, dotnet, java, elixir]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download helper
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nivrit-crypto-helper-linux-x86_64
           path: target/release
@@ -200,20 +203,20 @@ jobs:
 
       - name: Setup .NET
         if: matrix.sdk == 'dotnet'
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: '8.0'
 
       - name: Setup Java
         if: matrix.sdk == 'java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Elixir
         if: matrix.sdk == 'elixir'
-        uses: erlef/setup-beam@v1
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
         with:
           otp-version: '27'
           elixir-version: '1.17'
@@ -249,17 +252,17 @@ jobs:
   # the helper via env/dev path and never exercise it.
   packaged-install:
     name: Packaged install (${{ matrix.sdk }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-helper
     strategy:
       fail-fast: false
       matrix:
         sdk: [node, python, go, ruby, java, dotnet, elixir]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download all helper binaries
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
 
@@ -274,50 +277,50 @@ jobs:
 
       - name: Setup Bun
         if: matrix.sdk == 'node'
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Setup Node
         if: matrix.sdk == 'node'
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: '24.18.0'
 
       - name: Setup Python
         if: matrix.sdk == 'python'
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
       - name: Setup Go
         if: matrix.sdk == 'go'
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.25'
+          go-version: '1.26.5'
 
       - name: Setup Ruby
         if: matrix.sdk == 'ruby'
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: '3.3'
 
       - name: Setup Java
         if: matrix.sdk == 'java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup .NET
         if: matrix.sdk == 'dotnet'
-        uses: actions/setup-dotnet@v6
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: '8.0'
 
       - name: Setup Elixir
         if: matrix.sdk == 'elixir'
-        uses: erlef/setup-beam@v1
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
         with:
           otp-version: '27'
           elixir-version: '1.17'
@@ -342,7 +345,7 @@ jobs:
         working-directory: sdks/python
         run: |
           cp -r ../../helpers .
-          python -m pip install -U pip build wheel setuptools
+          python -m pip install pip==26.1.2 build==1.5.0 wheel==0.47.0 setuptools==83.0.0
           PYTHON=python bash build-wheels.sh
           python -m pip install dist/nivrit_sdk-0.1.0-py3-none-manylinux2014_x86_64.whl
           cd /tmp

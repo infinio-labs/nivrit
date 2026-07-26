@@ -1,15 +1,17 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 
 # -----------------------------------------------------------------------------
 # Build stage for the Nivrit API server and CLI.
 # -----------------------------------------------------------------------------
-FROM rust:1.97-bookworm AS builder
+FROM rust:1.97.1-bookworm@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa AS builder
 
 WORKDIR /usr/src/nivrit
 
 # Install native dependencies required by sqlx / rustls build.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+    && apt-get install -y --no-install-recommends \
+        pkg-config=1.8.1-1 \
+        libssl-dev=3.0.20-1~deb12u2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Build offline using the checked-in SQLx query metadata.
@@ -31,16 +33,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # Install sqlx-cli for running migrations at container startup.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo install sqlx-cli --version 0.9.0 --no-default-features --features native-tls,postgres \
+    cargo install sqlx-cli --version '=0.9.0' --locked --no-default-features --features native-tls,postgres \
     && cp /usr/local/cargo/bin/sqlx /usr/local/bin/sqlx
 
 # -----------------------------------------------------------------------------
 # Runtime stage.
 # -----------------------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates=20230311+deb12u1 \
+        curl=7.88.1-10+deb12u15 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/nivrit-api /usr/local/bin/nivrit-api
