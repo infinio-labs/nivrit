@@ -62,7 +62,7 @@ reqwest = { version = "0.13.4", features = ["json"] }
 regex = "1.12.4"
 
 # Auth
-jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
 argon2 = "0.5.3"
 
 # Crypto
