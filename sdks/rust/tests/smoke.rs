@@ -2,7 +2,7 @@ use nivrit_sdk::{
     b64_encode, decrypt_secret_value, encapsulate_project_key, encrypt_secret_value,
     generate_user_keypair, NivritSession,
 };
-use rand::RngCore;
+use rand::Rng;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -88,7 +88,7 @@ async fn smoke_test() {
     println!("created org {}", org["name"]);
 
     let mut project_key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut project_key);
+    rand::rng().fill_bytes(&mut project_key);
     let project_key_b64 = b64_encode(&project_key);
 
     let encapsulated = encapsulate_project_key(
@@ -99,7 +99,7 @@ async fn smoke_test() {
     let encrypted_project_key = b64_encode(&serde_json::to_vec(&encapsulated).unwrap());
 
     let mut nonce = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce);
+    rand::rng().fill_bytes(&mut nonce);
     let project = session
         .client
         .create_project(json!({

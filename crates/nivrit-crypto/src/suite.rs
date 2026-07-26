@@ -1,8 +1,8 @@
 use aes_gcm::{
-    aead::{Aead, KeyInit},
-    Aes256Gcm, Key as AesKey, Nonce as AesNonce,
+    aead::{Aead, KeyInit, Nonce},
+    Aes256Gcm,
 };
-use chacha20poly1305::{ChaCha20Poly1305, Key as ChaChaKey, Nonce as ChaChaNonce};
+use chacha20poly1305::ChaCha20Poly1305;
 use nivrit_core::{NivritError, Result};
 use serde::{Deserialize, Serialize};
 
@@ -37,14 +37,16 @@ impl CryptoSuite {
         let nonce = crate::keys::random_bytes::<12>();
         let ciphertext = match self {
             CryptoSuite::Aes256GcmV1 => {
-                let cipher = Aes256Gcm::new(AesKey::<Aes256Gcm>::from_slice(key));
-                let nonce = AesNonce::from_slice(&nonce);
-                cipher.encrypt(nonce, plaintext)
+                let cipher = Aes256Gcm::new_from_slice(key)
+                    .expect("AES-256 key length is fixed at 32 bytes");
+                let nonce = Nonce::<Aes256Gcm>::from(nonce);
+                cipher.encrypt(&nonce, plaintext)
             }
             CryptoSuite::ChaCha20Poly1305V1 => {
-                let cipher = ChaCha20Poly1305::new(ChaChaKey::from_slice(key));
-                let nonce = ChaChaNonce::from_slice(&nonce);
-                cipher.encrypt(nonce, plaintext)
+                let cipher = ChaCha20Poly1305::new_from_slice(key)
+                    .expect("ChaCha20-Poly1305 key length is fixed at 32 bytes");
+                let nonce = Nonce::<ChaCha20Poly1305>::from(nonce);
+                cipher.encrypt(&nonce, plaintext)
             }
         }
         .map_err(|e| NivritError::Crypto(e.to_string()))?;
@@ -60,14 +62,19 @@ impl CryptoSuite {
     pub fn decrypt(&self, ciphertext: &[u8], nonce: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
         match self {
             CryptoSuite::Aes256GcmV1 => {
-                let cipher = Aes256Gcm::new(AesKey::<Aes256Gcm>::from_slice(key));
-                let nonce = AesNonce::from_slice(nonce);
-                cipher.decrypt(nonce, ciphertext)
+                let cipher = Aes256Gcm::new_from_slice(key)
+                    .expect("AES-256 key length is fixed at 32 bytes");
+                let nonce = Nonce::<Aes256Gcm>::try_from(nonce)
+                    .map_err(|_| NivritError::Crypto("invalid AES-GCM nonce length".into()))?;
+                cipher.decrypt(&nonce, ciphertext)
             }
             CryptoSuite::ChaCha20Poly1305V1 => {
-                let cipher = ChaCha20Poly1305::new(ChaChaKey::from_slice(key));
-                let nonce = ChaChaNonce::from_slice(nonce);
-                cipher.decrypt(nonce, ciphertext)
+                let cipher = ChaCha20Poly1305::new_from_slice(key)
+                    .expect("ChaCha20-Poly1305 key length is fixed at 32 bytes");
+                let nonce = Nonce::<ChaCha20Poly1305>::try_from(nonce).map_err(|_| {
+                    NivritError::Crypto("invalid ChaCha20-Poly1305 nonce length".into())
+                })?;
+                cipher.decrypt(&nonce, ciphertext)
             }
         }
         .map_err(|e| NivritError::Crypto(e.to_string()))
@@ -174,5 +181,41 @@ mod tests {
         assert_eq!(decoded.suite, value.suite);
         assert_eq!(decoded.ciphertext, value.ciphertext);
         assert_eq!(decoded.nonce, value.nonce);
+    }
+
+    #[test]
+    fn aead_format_vectors_remain_stable() {
+        let key = [0x42; 32];
+        let nonce = [0x24; 12];
+        let plaintext = b"nivrit crypto format v1";
+
+        let aes = Aes256Gcm::new_from_slice(&key)
+            .unwrap()
+            .encrypt(&Nonce::<Aes256Gcm>::from(nonce), plaintext.as_slice())
+            .unwrap();
+        let chacha = ChaCha20Poly1305::new_from_slice(&key)
+            .unwrap()
+            .encrypt(
+                &Nonce::<ChaCha20Poly1305>::from(nonce),
+                plaintext.as_slice(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            aes.as_slice(),
+            &[
+                123, 248, 178, 51, 128, 178, 230, 93, 84, 145, 82, 222, 210, 18, 245, 201, 30, 150,
+                82, 4, 150, 221, 97, 234, 142, 101, 220, 68, 138, 132, 126, 83, 130, 169, 215, 120,
+                110, 47, 255,
+            ]
+        );
+        assert_eq!(
+            chacha.as_slice(),
+            &[
+                138, 110, 243, 124, 130, 170, 120, 203, 247, 18, 248, 255, 139, 55, 123, 247, 141,
+                164, 40, 197, 134, 85, 101, 122, 45, 43, 128, 8, 192, 101, 148, 243, 127, 126, 35,
+                252, 220, 111, 142,
+            ]
+        );
     }
 }

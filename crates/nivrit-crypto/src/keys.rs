@@ -1,4 +1,4 @@
-use rand::rngs::OsRng;
+use rand::{rngs::SysRng, TryRng};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 pub struct UserKeyPair {
@@ -8,7 +8,7 @@ pub struct UserKeyPair {
 
 impl UserKeyPair {
     pub fn generate() -> Self {
-        let private_key = StaticSecret::random_from_rng(OsRng);
+        let private_key = StaticSecret::random();
         let public_key = PublicKey::from(&private_key);
         Self {
             private_key,
@@ -17,11 +17,11 @@ impl UserKeyPair {
     }
 }
 
-use rand::RngCore;
-
 pub fn random_bytes<const N: usize>() -> [u8; N] {
     let mut buf = [0u8; N];
-    rand::rngs::OsRng.fill_bytes(&mut buf);
+    SysRng
+        .try_fill_bytes(&mut buf)
+        .expect("operating-system RNG failure");
     buf
 }
 

@@ -30,5 +30,4 @@ lettre = { version = "0.11.15", default-features = false, features = ["builder",
 
 # TOTP secret encryption
 aes-gcm = { workspace = true }
-rand = { workspace = true }
 base64 = { workspace = true }

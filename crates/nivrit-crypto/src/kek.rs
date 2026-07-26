@@ -46,13 +46,13 @@ impl LocalKek {
 impl KekBackend for LocalKek {
     async fn wrap(&self, dek: &[u8]) -> Result<Vec<u8>> {
         use aes_gcm::{
-            aead::{Aead, AeadCore, KeyInit, OsRng},
+            aead::{Aead, KeyInit, Nonce},
             Aes256Gcm,
         };
 
         let cipher = Aes256Gcm::new_from_slice(&self.key)
             .map_err(|e| NivritError::Crypto(format!("local KEK init failed: {e}")))?;
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let nonce = Nonce::<Aes256Gcm>::from(crate::keys::random_bytes::<12>());
         let ciphertext = cipher
             .encrypt(&nonce, dek)
             .map_err(|e| NivritError::Crypto(format!("local KEK wrap failed: {e}")))?;
@@ -64,7 +64,10 @@ impl KekBackend for LocalKek {
     }
 
     async fn unwrap(&self, ciphertext: &[u8]) -> Result<Vec<u8>> {
-        use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce};
+        use aes_gcm::{
+            aead::{Aead, KeyInit, Nonce},
+            Aes256Gcm,
+        };
 
         if ciphertext.len() < 12 + 16 {
             return Err(NivritError::Crypto(
@@ -72,11 +75,12 @@ impl KekBackend for LocalKek {
             ));
         }
         let (nonce_bytes, sealed) = ciphertext.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce = Nonce::<Aes256Gcm>::try_from(nonce_bytes)
+            .map_err(|_| NivritError::Crypto("local KEK unwrap: invalid nonce".into()))?;
         let cipher = Aes256Gcm::new_from_slice(&self.key)
             .map_err(|e| NivritError::Crypto(format!("local KEK init failed: {e}")))?;
         cipher
-            .decrypt(nonce, sealed)
+            .decrypt(&nonce, sealed)
             .map_err(|e| NivritError::Crypto(format!("local KEK unwrap failed: {e}")))
     }
 }

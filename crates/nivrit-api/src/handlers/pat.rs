@@ -5,7 +5,7 @@ use axum::{
 use chrono::{Duration, Utc};
 use nivrit_core::NivritError;
 use nivrit_db::queries;
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -50,7 +50,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 
 fn generate_token() -> String {
     let mut bytes = vec![0u8; PAT_RANDOM_BYTES];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     format!("{}{}", PAT_PREFIX, bytes_to_hex(&bytes))
 }
 

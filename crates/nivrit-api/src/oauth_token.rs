@@ -17,7 +17,7 @@
 
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use nivrit_core::{NivritError, Result};
-use rand::RngCore;
+use rand::TryRng;
 use serde::{Deserialize, Serialize};
 
 const STATE_TTL_SECS: i64 = 600; // 10 minutes
@@ -47,7 +47,9 @@ fn now() -> i64 {
 
 fn random_nonce() -> String {
     let mut bytes = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("operating-system RNG failure");
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
