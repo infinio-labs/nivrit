@@ -156,22 +156,22 @@ fn run(req: Request) -> Response {
                 "encrypted_private_key": b64_encode(&combined),
                 "private_key_nonce": b64_encode(&encrypted.nonce),
                 "private_key_algorithm": "aes256gcm-v1",
-                "auth_hash": b64_encode(&nivrit_crypto::derive_auth_hash(password.as_bytes(), &email)),
+                "auth_hash": b64_encode(&*nivrit_crypto::derive_auth_hash(password.as_bytes(), &email)),
                 "recovery_code": recovery_code,
-                "recovery_auth_hash": b64_encode(&nivrit_crypto::derive_recovery_auth_hash(&recovery_code, &email)),
+                "recovery_auth_hash": b64_encode(&*nivrit_crypto::derive_recovery_auth_hash(&recovery_code, &email)),
                 "encrypted_private_key_recovery": b64_encode(&recovery_ciphertext),
                 "private_key_recovery_nonce": b64_encode(&recovery_nonce),
                 "private_key_recovery_algorithm": "aes256gcm-v1",
             }))
         }
         Request::DeriveAuthHash { password, email } => ok(serde_json::json!({
-            "auth_hash": b64_encode(&nivrit_crypto::derive_auth_hash(password.as_bytes(), &email)),
+            "auth_hash": b64_encode(&*nivrit_crypto::derive_auth_hash(password.as_bytes(), &email)),
         })),
         Request::DeriveRecoveryAuthHash {
             recovery_code,
             email,
         } => ok(serde_json::json!({
-            "recovery_auth_hash": b64_encode(&nivrit_crypto::derive_recovery_auth_hash(&recovery_code, &email)),
+            "recovery_auth_hash": b64_encode(&*nivrit_crypto::derive_recovery_auth_hash(&recovery_code, &email)),
         })),
         Request::ResetPasswordMaterial {
             encrypted_private_key_recovery,
@@ -208,7 +208,7 @@ fn run(req: Request) -> Response {
             combined.extend_from_slice(&encrypted.ciphertext);
 
             ok(serde_json::json!({
-                "auth_hash": b64_encode(&nivrit_crypto::derive_auth_hash(new_password.as_bytes(), &email)),
+                "auth_hash": b64_encode(&*nivrit_crypto::derive_auth_hash(new_password.as_bytes(), &email)),
                 "encrypted_private_key": b64_encode(&combined),
                 "private_key_nonce": b64_encode(&encrypted.nonce),
                 "private_key_algorithm": "aes256gcm-v1",
@@ -283,7 +283,7 @@ fn run(req: Request) -> Response {
             };
             match decapsulate_project_key_hybrid(&encapsulated, &private_key) {
                 Ok(project_key) => {
-                    ok(serde_json::json!({ "project_key": b64_encode(&project_key) }))
+                    ok(serde_json::json!({ "project_key": b64_encode(&*project_key) }))
                 }
                 Err(e) => err(format!("decapsulate project key: {e}")),
             }

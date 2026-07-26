@@ -15,29 +15,34 @@ export interface LoginResponse {
   };
 }
 
-export interface RegisterResponse extends LoginResponse {
-  recovery_code: string;
-}
+// The recovery code is generated on the client, so it is not in the response.
+export type RegisterResponse = LoginResponse;
 
 export type LoginResult =
   | { status: 'Success' } & LoginResponse
   | { status: 'MfaRequired'; temp_token: string };
 
+// No password field: the server receives an opaque auth_hash derived in WASM,
+// plus ciphertext it cannot open. See crypto.ts.
 export interface RegisterRequest {
   email: string;
-  password: string;
+  auth_hash: string;
   name?: string;
   public_key: string;
   encrypted_private_key: string;
   private_key_nonce: string;
   private_key_algorithm: string;
+  recovery_auth_hash: string;
+  encrypted_private_key_recovery: string;
+  private_key_recovery_nonce: string;
+  private_key_recovery_algorithm: string;
 }
 
-export async function login(email: string, password: string): Promise<LoginResult> {
+export async function login(email: string, authHash: string): Promise<LoginResult> {
   const res = await fetch(`${API_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, auth_hash: authHash }),
   });
   if (!res.ok) throw new Error('login failed');
   return res.json();
@@ -73,21 +78,51 @@ export async function forgotPassword(email: string): Promise<{ sent: boolean }> 
   return res.json();
 }
 
-export async function verifyResetToken(token: string): Promise<{ valid: boolean }> {
+export async function verifyResetToken(
+  token: string
+): Promise<{ valid: boolean; email: string }> {
   const res = await fetch(`${API_URL}/auth/reset-password/verify?token=${encodeURIComponent(token)}`);
   if (!res.ok) throw new Error('invalid token');
   return res.json();
 }
 
-export async function resetPassword(
+export interface RecoveryBlob {
+  encrypted_private_key_recovery: string;
+  private_key_recovery_nonce: string;
+  private_key_recovery_algorithm: string;
+}
+
+/// Step 1: prove possession of the recovery code and fetch the recovery blob.
+/// The blob is ciphertext only the recovery code can open, so the server learns
+/// nothing by handing it over.
+export async function resetPasswordBegin(
   token: string,
-  recoveryCode: string,
-  newPassword: string
-): Promise<LoginResponse> {
+  recoveryAuthHash: string
+): Promise<RecoveryBlob> {
+  const res = await fetch(`${API_URL}/auth/reset-password/begin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, recovery_auth_hash: recoveryAuthHash }),
+  });
+  if (!res.ok) throw new Error('invalid reset token or recovery code');
+  return res.json();
+}
+
+export interface ResetPasswordRequest {
+  token: string;
+  recovery_auth_hash: string;
+  new_auth_hash: string;
+  encrypted_private_key: string;
+  private_key_nonce: string;
+  private_key_algorithm: string;
+}
+
+/// Step 2: upload the private key re-wrapped under the new password.
+export async function resetPassword(body: ResetPasswordRequest): Promise<LoginResponse> {
   const res = await fetch(`${API_URL}/auth/reset-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, recovery_code: recoveryCode, new_password: newPassword }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error('reset failed');
   return res.json();
@@ -135,11 +170,15 @@ export interface OAuthSetupRequest {
   // Signed identity token from the callback. Replaces the old client-supplied
   // provider/provider_user_id/email/name (which allowed account pre-hijacking).
   setup_token: string;
-  master_password: string;
+  auth_hash: string;
   public_key: string;
   encrypted_private_key: string;
   private_key_nonce: string;
   private_key_algorithm: string;
+  recovery_auth_hash: string;
+  encrypted_private_key_recovery: string;
+  private_key_recovery_nonce: string;
+  private_key_recovery_algorithm: string;
 }
 
 export async function oauthSetup(body: OAuthSetupRequest): Promise<RegisterResponse> {
@@ -159,10 +198,13 @@ export interface TotpSetupResponse {
   uri: string;
 }
 
-export async function setupTotp(token: string): Promise<TotpSetupResponse> {
+// authHash is required only when replacing an existing TOTP secret, so that a
+// stolen session token alone cannot re-enrol a new authenticator.
+export async function setupTotp(token: string, authHash?: string): Promise<TotpSetupResponse> {
   const res = await fetch(`${API_URL}/auth/totp/setup`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ auth_hash: authHash ?? null }),
   });
   if (!res.ok) throw new Error('totp setup failed');
   return res.json();
@@ -180,13 +222,13 @@ export async function verifyTotp(token: string, code: string): Promise<{ enabled
 
 export async function disableTotp(
   token: string,
-  password: string,
+  authHash: string,
   code: string
 ): Promise<{ disabled: boolean }> {
   const res = await fetch(`${API_URL}/auth/totp/disable`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ password, code }),
+    body: JSON.stringify({ auth_hash: authHash, code }),
   });
   if (!res.ok) throw new Error('totp disable failed');
   return res.json();

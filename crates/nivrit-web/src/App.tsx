@@ -545,7 +545,7 @@ function App() {
     const s = getSession();
     if (!s) return;
     try {
-      await disableTotpSession(s.token, disableTotpPassword, disableTotpCode);
+      await disableTotpSession(s.token, s.email, disableTotpPassword, disableTotpCode);
       setTotpEnabled(false);
       setDisableTotpPassword('');
       setDisableTotpCode('');

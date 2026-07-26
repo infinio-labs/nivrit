@@ -1127,6 +1127,10 @@ pub struct UserKeyRotation<'a> {
     pub encrypted_private_key_recovery: &'a [u8],
     pub private_key_recovery_nonce: &'a [u8],
     pub private_key_recovery_algorithm: &'a str,
+    /// Hash of the freshly issued recovery credential. Rotation mints a new
+    /// recovery code, because the old one wraps a private key that no longer
+    /// exists.
+    pub recovery_code_hash: &'a str,
 }
 
 /// Replace a user's key pair and every key wrapped to it, atomically.
@@ -1162,8 +1166,9 @@ pub async fn rotate_user_keys(
             encrypted_private_key_recovery = $5,
             private_key_recovery_nonce = $6,
             private_key_recovery_algorithm = $7,
+            recovery_code_hash = $8,
             updated_at = NOW()
-        WHERE id = $8
+        WHERE id = $9
         "#,
         keys.public_key,
         keys.encrypted_private_key,
@@ -1172,6 +1177,7 @@ pub async fn rotate_user_keys(
         keys.encrypted_private_key_recovery,
         keys.private_key_recovery_nonce,
         keys.private_key_recovery_algorithm,
+        keys.recovery_code_hash,
         user_id
     )
     .execute(&mut *tx)

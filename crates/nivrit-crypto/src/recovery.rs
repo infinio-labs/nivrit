@@ -16,6 +16,7 @@
 //! hash cannot derive the key.
 
 use nivrit_core::Result;
+use zeroize::Zeroizing;
 
 use crate::keys::random_bytes;
 use crate::password::derive_key;
@@ -68,8 +69,8 @@ pub fn normalize_recovery_code(code: &str) -> String {
 ///
 /// This value must never be sent to the server. Send
 /// [`crate::password::derive_recovery_auth_hash`] instead.
-pub fn derive_recovery_key(code: &str, email: &str) -> [u8; 32] {
-    let normalized = normalize_recovery_code(code);
+pub fn derive_recovery_key(code: &str, email: &str) -> Zeroizing<[u8; 32]> {
+    let normalized = Zeroizing::new(normalize_recovery_code(code));
     let salt = crate::password::recovery_key_salt(email);
     derive_key(normalized.as_bytes(), &salt)
 }
@@ -90,8 +91,10 @@ pub fn decrypt_private_key_from_recovery(
     ciphertext: &[u8],
     nonce: &[u8],
     recovery_key: &[u8; 32],
-) -> Result<Vec<u8>> {
-    CryptoSuite::Aes256GcmV1.decrypt(ciphertext, nonce, recovery_key)
+) -> Result<Zeroizing<Vec<u8>>> {
+    CryptoSuite::Aes256GcmV1
+        .decrypt(ciphertext, nonce, recovery_key)
+        .map(Zeroizing::new)
 }
 
 #[cfg(test)]
@@ -149,7 +152,7 @@ mod tests {
 
         let (ciphertext, nonce) = encrypt_private_key_for_recovery(private_key, &key).unwrap();
         let recovered = decrypt_private_key_from_recovery(&ciphertext, &nonce, &key).unwrap();
-        assert_eq!(recovered, private_key);
+        assert_eq!(*recovered, private_key.to_vec());
     }
 
     #[test]

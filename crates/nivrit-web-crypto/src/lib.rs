@@ -118,9 +118,9 @@ pub fn generate_registration_material(password: &str, email: &str) -> Result<JsV
         encrypted_private_key: b64_encode(&combined),
         private_key_nonce: b64_encode(&encrypted.nonce),
         private_key_algorithm: "aes256gcm-v1".into(),
-        auth_hash: b64_encode(&auth_hash),
+        auth_hash: b64_encode(&*auth_hash),
         recovery_code,
-        recovery_auth_hash: b64_encode(&recovery_auth_hash),
+        recovery_auth_hash: b64_encode(&*recovery_auth_hash),
         encrypted_private_key_recovery: b64_encode(&recovery_ciphertext),
         private_key_recovery_nonce: b64_encode(&recovery_nonce),
         private_key_recovery_algorithm: "aes256gcm-v1".into(),
@@ -130,13 +130,16 @@ pub fn generate_registration_material(password: &str, email: &str) -> Result<JsV
 /// Derive the opaque credential the server accepts in place of the password.
 #[wasm_bindgen]
 pub fn derive_auth_hash(password: &str, email: &str) -> String {
-    b64_encode(&nivrit_crypto::derive_auth_hash(password.as_bytes(), email))
+    b64_encode(&*nivrit_crypto::derive_auth_hash(
+        password.as_bytes(),
+        email,
+    ))
 }
 
 /// Derive the opaque credential that proves possession of a recovery code.
 #[wasm_bindgen]
 pub fn derive_recovery_auth_hash(recovery_code: &str, email: &str) -> String {
-    b64_encode(&nivrit_crypto::derive_recovery_auth_hash(
+    b64_encode(&*nivrit_crypto::derive_recovery_auth_hash(
         recovery_code,
         email,
     ))
@@ -181,7 +184,7 @@ pub fn reset_password_material(
     combined.extend_from_slice(&encrypted.ciphertext);
 
     Ok(serde_wasm_bindgen::to_value(&ResetMaterial {
-        auth_hash: b64_encode(&nivrit_crypto::derive_auth_hash(
+        auth_hash: b64_encode(&*nivrit_crypto::derive_auth_hash(
             new_password.as_bytes(),
             email,
         )),
@@ -259,7 +262,7 @@ pub fn decapsulate_project_key(
         .map_err(|e| err(format!("decapsulation failed: {e}")))?;
 
     Ok(serde_wasm_bindgen::to_value(&DecryptedProjectKey {
-        project_key: b64_encode(&project_key),
+        project_key: b64_encode(&*project_key),
     })?)
 }
 

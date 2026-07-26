@@ -139,6 +139,10 @@ pub struct RotateKeyRequest {
     pub private_key_recovery_nonce: String,
     #[serde(default = "default_private_key_algorithm")]
     pub private_key_recovery_algorithm: String,
+    /// Credential for the newly issued recovery code. Rotation replaces the
+    /// recovery code along with the key pair, since the old code wraps a
+    /// private key that no longer exists.
+    pub recovery_auth_hash: String,
     /// Re-encrypted project keys for each membership the user wants to rotate.
     pub project_keys: Vec<RotatedProjectKey>,
 }
@@ -188,6 +192,15 @@ pub async fn rotate_key(
                 NivritError::Validation(format!("invalid private_key_recovery_nonce: {}", e))
             })?;
 
+    let recovery_auth_hash = STANDARD
+        .decode(&req.recovery_auth_hash)
+        .map_err(|e| NivritError::Validation(format!("invalid recovery_auth_hash: {}", e)))?;
+    if recovery_auth_hash.len() != 32 {
+        return Err(NivritError::Validation("recovery_auth_hash must be 32 bytes".into()).into());
+    }
+    let recovery_code_hash =
+        crate::cpu::hash_credential(STANDARD.encode(&recovery_auth_hash)).await?;
+
     // Decode everything before touching the database so a malformed entry
     // cannot abort the transaction halfway.
     let decoded: Vec<(Uuid, Vec<u8>, Vec<u8>, String)> = req
@@ -232,6 +245,7 @@ pub async fn rotate_key(
             encrypted_private_key_recovery: &encrypted_private_key_recovery,
             private_key_recovery_nonce: &private_key_recovery_nonce,
             private_key_recovery_algorithm: &req.private_key_recovery_algorithm,
+            recovery_code_hash: &recovery_code_hash,
         },
         &project_keys,
     )

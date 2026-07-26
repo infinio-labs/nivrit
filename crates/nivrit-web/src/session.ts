@@ -1,10 +1,13 @@
 import {
+  deriveAuthHash,
+  deriveRecoveryAuthHash,
+  generateRegistrationMaterial,
+  resetPasswordMaterial,
   decryptPrivateKey,
   decryptValue,
   decapsulateProjectKey,
   encapsulateProjectKey,
   encryptValue,
-  generateUserKeypair,
   hybridSuiteId,
 } from './crypto';
 import {
@@ -28,6 +31,7 @@ import {
   oauthSetup,
   register,
   resetPassword,
+  resetPasswordBegin,
   setSecret,
   setupTotp,
   verifyResetToken,
@@ -104,7 +108,10 @@ async function buildSession(
 }
 
 export async function loginSession(email: string, password: string): Promise<LoginResult> {
-  const result = await login(email, password);
+  // The password is used twice locally and sent never: once to derive the
+  // opaque credential the server checks, once (inside buildSession) to unwrap
+  // the private key.
+  const result = await login(email, await deriveAuthHash(password, email));
   if (result.status === 'MfaRequired') {
     return result;
   }
@@ -122,19 +129,26 @@ export async function registerSession(
   password: string,
   name?: string
 ): Promise<{ session: Session; recoveryCode: string }> {
-  const keypair = await generateUserKeypair(password);
+  // One WASM call produces the keypair, both wrapped copies of the private key,
+  // and both opaque credentials. The recovery code is generated here, not by
+  // the server, and is returned for one-time display to the user.
+  const material = await generateRegistrationMaterial(password, email);
   const response = await register({
     email,
-    password,
+    auth_hash: material.auth_hash,
     name,
-    public_key: keypair.public_key,
-    encrypted_private_key: keypair.encrypted_private_key,
-    private_key_nonce: keypair.private_key_nonce,
-    private_key_algorithm: keypair.private_key_algorithm,
+    public_key: material.public_key,
+    encrypted_private_key: material.encrypted_private_key,
+    private_key_nonce: material.private_key_nonce,
+    private_key_algorithm: material.private_key_algorithm,
+    recovery_auth_hash: material.recovery_auth_hash,
+    encrypted_private_key_recovery: material.encrypted_private_key_recovery,
+    private_key_recovery_nonce: material.private_key_recovery_nonce,
+    private_key_recovery_algorithm: material.private_key_recovery_algorithm,
   });
 
   const s = await buildSession(response, password);
-  return { session: s, recoveryCode: response.recovery_code };
+  return { session: s, recoveryCode: material.recovery_code };
 }
 
 export async function forgotPasswordSession(email: string): Promise<{ sent: boolean }> {
@@ -146,8 +160,30 @@ export async function resetPasswordSession(
   recoveryCode: string,
   newPassword: string
 ): Promise<Session> {
-  await verifyResetToken(token);
-  const response = await resetPassword(token, recoveryCode, newPassword);
+  // The email comes back with the token check: both derivations are salted with
+  // it, and the user does not have to retype it on the reset form.
+  const { email } = await verifyResetToken(token);
+  const recoveryAuthHash = await deriveRecoveryAuthHash(recoveryCode, email);
+
+  // Fetch the recovery blob, then unwrap and re-wrap the private key locally.
+  // The server sees neither the recovery code nor either password.
+  const blob = await resetPasswordBegin(token, recoveryAuthHash);
+  const material = await resetPasswordMaterial(
+    blob.encrypted_private_key_recovery,
+    blob.private_key_recovery_nonce,
+    recoveryCode,
+    email,
+    newPassword
+  );
+
+  const response = await resetPassword({
+    token,
+    recovery_auth_hash: recoveryAuthHash,
+    new_auth_hash: material.auth_hash,
+    encrypted_private_key: material.encrypted_private_key,
+    private_key_nonce: material.private_key_nonce,
+    private_key_algorithm: material.private_key_algorithm,
+  });
   return buildSession(response, newPassword);
 }
 
@@ -165,23 +201,33 @@ export async function processOAuthCallback(
     return { session: s };
   }
 
-  const keypair = await generateUserKeypair(masterPassword);
+  const material = await generateRegistrationMaterial(masterPassword, result.email);
   const setup = await oauthSetup({
     setup_token: result.setup_token,
-    master_password: masterPassword,
-    public_key: keypair.public_key,
-    encrypted_private_key: keypair.encrypted_private_key,
-    private_key_nonce: keypair.private_key_nonce,
-    private_key_algorithm: keypair.private_key_algorithm,
+    auth_hash: material.auth_hash,
+    public_key: material.public_key,
+    encrypted_private_key: material.encrypted_private_key,
+    private_key_nonce: material.private_key_nonce,
+    private_key_algorithm: material.private_key_algorithm,
+    recovery_auth_hash: material.recovery_auth_hash,
+    encrypted_private_key_recovery: material.encrypted_private_key_recovery,
+    private_key_recovery_nonce: material.private_key_recovery_nonce,
+    private_key_recovery_algorithm: material.private_key_recovery_algorithm,
   });
   const s = await buildSession(setup, masterPassword);
-  return { session: s, recoveryCode: setup.recovery_code };
+  return { session: s, recoveryCode: material.recovery_code };
 }
 
 // TOTP
 
-export async function setupTotpSession(token: string): Promise<{ secret: string; uri: string }> {
-  return setupTotp(token);
+export async function setupTotpSession(
+  token: string,
+  reauth?: { email: string; password: string }
+): Promise<{ secret: string; uri: string }> {
+  // Replacing an existing authenticator requires the password, so a stolen
+  // session token is not enough on its own.
+  const authHash = reauth ? await deriveAuthHash(reauth.password, reauth.email) : undefined;
+  return setupTotp(token, authHash);
 }
 
 export async function verifyTotpSession(token: string, code: string): Promise<boolean> {
@@ -191,10 +237,11 @@ export async function verifyTotpSession(token: string, code: string): Promise<bo
 
 export async function disableTotpSession(
   token: string,
+  email: string,
   password: string,
   code: string
 ): Promise<boolean> {
-  const res = await disableTotp(token, password, code);
+  const res = await disableTotp(token, await deriveAuthHash(password, email), code);
   return res.disabled;
 }
 

@@ -1,4 +1,8 @@
 import type {
+  derive_auth_hash as DeriveAuthHashFn,
+  derive_recovery_auth_hash as DeriveRecoveryAuthHashFn,
+  generate_registration_material as GenerateRegistrationMaterialFn,
+  reset_password_material as ResetPasswordMaterialFn,
   decrypt_private_key as DecryptPrivateKeyFn,
   decrypt_value as DecryptValueFn,
   decapsulate_project_key as DecapsulateProjectKeyFn,
@@ -12,6 +16,10 @@ import type {
 let wasmModule: {
   init_panic_hook: typeof InitPanicHookFn;
   generate_user_keypair: typeof GenerateUserKeypairFn;
+  generate_registration_material: typeof GenerateRegistrationMaterialFn;
+  derive_auth_hash: typeof DeriveAuthHashFn;
+  derive_recovery_auth_hash: typeof DeriveRecoveryAuthHashFn;
+  reset_password_material: typeof ResetPasswordMaterialFn;
   decrypt_private_key: typeof DecryptPrivateKeyFn;
   encapsulate_project_key: typeof EncapsulateProjectKeyFn;
   decapsulate_project_key: typeof DecapsulateProjectKeyFn;
@@ -110,4 +118,74 @@ export async function decryptValue(
 
 export function hybridSuiteId(): string {
   return getWasm().hybrid_suite_id();
+}
+
+/**
+ * Everything registration needs, computed in WASM.
+ *
+ * The master password and the plaintext private key never cross back into
+ * JavaScript, so they cannot be read by injected script or sent to the server.
+ * `recovery_code` is the one value that must be shown to the user, once.
+ */
+export interface RegistrationMaterial {
+  public_key: string;
+  encrypted_private_key: string;
+  private_key_nonce: string;
+  private_key_algorithm: string;
+  auth_hash: string;
+  recovery_code: string;
+  recovery_auth_hash: string;
+  encrypted_private_key_recovery: string;
+  private_key_recovery_nonce: string;
+  private_key_recovery_algorithm: string;
+}
+
+export async function generateRegistrationMaterial(
+  password: string,
+  email: string
+): Promise<RegistrationMaterial> {
+  const wasm = getWasm();
+  return wasm.generate_registration_material(password, email) as unknown as RegistrationMaterial;
+}
+
+/** The opaque credential the server accepts in place of the password. */
+export async function deriveAuthHash(password: string, email: string): Promise<string> {
+  return getWasm().derive_auth_hash(password, email);
+}
+
+/** The opaque credential proving possession of a recovery code. */
+export async function deriveRecoveryAuthHash(
+  recoveryCode: string,
+  email: string
+): Promise<string> {
+  return getWasm().derive_recovery_auth_hash(recoveryCode, email);
+}
+
+export interface ResetMaterial {
+  auth_hash: string;
+  encrypted_private_key: string;
+  private_key_nonce: string;
+  private_key_algorithm: string;
+}
+
+/**
+ * Unwrap the private key with the recovery code and re-wrap it under a new
+ * password. Runs entirely in WASM: neither password nor the recovery code is
+ * exposed to JavaScript or transmitted.
+ */
+export async function resetPasswordMaterial(
+  encryptedPrivateKeyRecovery: string,
+  privateKeyRecoveryNonce: string,
+  recoveryCode: string,
+  email: string,
+  newPassword: string
+): Promise<ResetMaterial> {
+  const wasm = getWasm();
+  return wasm.reset_password_material(
+    encryptedPrivateKeyRecovery,
+    privateKeyRecoveryNonce,
+    recoveryCode,
+    email,
+    newPassword
+  ) as unknown as ResetMaterial;
 }

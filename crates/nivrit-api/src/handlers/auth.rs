@@ -576,7 +576,13 @@ pub async fn verify_reset_token(
     if row.used_at.is_some() || row.expires_at < Utc::now() {
         return Err(NivritError::Unauthorized.into());
     }
-    Ok(Json(serde_json::json!({ "valid": true })))
+    // Return the email: the client needs it to salt the recovery and password
+    // derivations. Safe to disclose here because the token is a 32-byte secret
+    // that was mailed to that address in the first place.
+    let user = queries::get_user_by_id(&state.db, row.user_id).await?;
+    Ok(Json(
+        serde_json::json!({ "valid": true, "email": user.email }),
+    ))
 }
 
 /// Validate a reset token and the supplied recovery credential together.

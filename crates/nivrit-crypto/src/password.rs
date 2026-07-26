@@ -1,5 +1,6 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 // Argon2id parameters for deriving encryption keys from a user password.
 // These are intentionally memory-hard to resist GPU/ASIC brute force.
@@ -18,10 +19,15 @@ fn argon2id_hasher() -> Argon2<'static> {
 /// The salt must be at least 8 bytes (16 bytes is recommended) and must be
 /// unique per password/secret. This function is deterministic: the same
 /// password and salt always produce the same key.
-pub fn derive_key(password: &[u8], salt: &[u8]) -> [u8; 32] {
-    let mut key = [0u8; 32];
+///
+/// The result is wrapped in [`Zeroizing`] so the key is scrubbed from memory
+/// when the caller drops it, rather than lingering in freed heap until
+/// something happens to overwrite it. It derefs to `[u8; 32]`, so call sites
+/// pass `&key` exactly as before.
+pub fn derive_key(password: &[u8], salt: &[u8]) -> Zeroizing<[u8; 32]> {
+    let mut key = Zeroizing::new([0u8; 32]);
     argon2id_hasher()
-        .hash_password_into(password, salt, &mut key)
+        .hash_password_into(password, salt, &mut *key)
         .expect("argon2id output length is valid");
     key
 }
@@ -74,7 +80,7 @@ fn deterministic_salt(domain: &[u8], identity: &str) -> [u8; 16] {
 /// The server treats the returned value as an opaque credential and stores only
 /// `hash_password(auth_hash)`, so a database leak does not yield a replayable
 /// credential either.
-pub fn derive_auth_hash(password: &[u8], email: &str) -> [u8; 32] {
+pub fn derive_auth_hash(password: &[u8], email: &str) -> Zeroizing<[u8; 32]> {
     let salt = deterministic_salt(AUTH_SALT_DOMAIN, email);
     derive_key(password, &salt)
 }
@@ -84,8 +90,8 @@ pub fn derive_auth_hash(password: &[u8], email: &str) -> [u8; 32] {
 /// Same split as [`derive_auth_hash`]: the server verifies this value to release
 /// the recovery blob, while the recovery *key* that actually decrypts the blob is
 /// derived separately on the client and never transmitted.
-pub fn derive_recovery_auth_hash(recovery_code: &str, email: &str) -> [u8; 32] {
-    let normalized = recovery_code.to_ascii_uppercase().replace('-', "");
+pub fn derive_recovery_auth_hash(recovery_code: &str, email: &str) -> Zeroizing<[u8; 32]> {
+    let normalized = Zeroizing::new(recovery_code.to_ascii_uppercase().replace('-', ""));
     let salt = deterministic_salt(RECOVERY_AUTH_SALT_DOMAIN, email);
     derive_key(normalized.as_bytes(), &salt)
 }
@@ -94,6 +100,37 @@ pub fn derive_recovery_auth_hash(recovery_code: &str, email: &str) -> [u8; 32] {
 mod tests {
     use super::*;
     use crate::keys::random_bytes;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    /// Known-answer vectors pinning the credential derivation.
+    ///
+    /// These values are what every existing account's stored hash was computed
+    /// from. Changing the Argon2 parameters, the salt domain separators, or the
+    /// email normalization would silently lock every user out of their account
+    /// with no error anywhere — the server would simply stop recognizing correct
+    /// passwords. If this test fails, the change is a breaking migration, not a
+    /// refactor.
+    ///
+    /// The same vectors are produced by the WASM module and the crypto-helper
+    /// binary, which is what lets an account created in the browser log in from
+    /// the CLI.
+    #[test]
+    fn credential_derivation_vectors_remain_stable() {
+        assert_eq!(
+            STANDARD.encode(derive_auth_hash(
+                b"correct-horse-battery-staple",
+                "user@example.com"
+            )),
+            "ii6V2OYlzUzqyHKc6tRUIJYxz252Y400/it5TjFVyZ8="
+        );
+        assert_eq!(
+            STANDARD.encode(derive_recovery_auth_hash(
+                "ABCD-EFGH-JKLM-NPQR-STUV-WXYZ",
+                "user@example.com"
+            )),
+            "A+lfAm3NzmnwNHyB+bVE2pXI9+mrs112gkoEzB0I6tI="
+        );
+    }
 
     #[test]
     fn auth_hash_is_deterministic_and_email_normalized() {

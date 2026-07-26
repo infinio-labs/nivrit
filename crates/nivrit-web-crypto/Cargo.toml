@@ -33,3 +33,10 @@ features = ["console"]
 
 [dev-dependencies]
 wasm-bindgen-test = "=0.3.75"
+
+# rustc emits bulk-memory instructions by default for wasm32, but the wasm-opt
+# that wasm-pack vendors predates them and rejects the module. Enabling the
+# proposal explicitly keeps size optimization on instead of turning wasm-opt off
+# (every browser Nivrit supports has shipped bulk-memory since 2020).
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]

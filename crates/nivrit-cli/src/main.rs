@@ -603,13 +603,71 @@ fn load_config() -> CliConfig {
     }
 }
 
+/// Persist the CLI config.
+///
+/// The file holds the plaintext hybrid private key and every project key the
+/// user can decrypt, so it is written owner-only. `std::fs::write` would create
+/// it 0666-and-umask — 0644 on a typical Linux box — leaving every secret in
+/// every project readable by any other local user or process.
+///
+/// The permissions are set in the same call that creates the file, not
+/// afterwards, so there is no window in which the contents exist at the wider
+/// mode.
 fn save_config(config: &CliConfig) -> anyhow::Result<()> {
     let path = config_path();
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("config path has no parent directory"))?;
-    std::fs::create_dir_all(parent)?;
-    std::fs::write(path, serde_json::to_string_pretty(config)?)?;
+    create_private_dir(parent)?;
+
+    let serialized = serde_json::to_string_pretty(config)?;
+    write_private_file(&path, serialized.as_bytes())?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_private_dir(path: &std::path::Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    if path.exists() {
+        return Ok(());
+    }
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(path: &std::path::Path) -> anyhow::Result<()> {
+    // Windows inherits restrictive ACLs from the user profile directory.
+    std::fs::create_dir_all(path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &std::path::Path, contents: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents)?;
+
+    // `mode` only applies when the file is created, so tighten an existing file
+    // that a previous version wrote with the default mode.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &std::path::Path, contents: &[u8]) -> anyhow::Result<()> {
+    std::fs::write(path, contents)?;
     Ok(())
 }
 
@@ -656,14 +714,33 @@ async fn register(
         encrypt_private_key(&private_key_plaintext, password)?;
     let public_key = keypair.serialize_public_key();
 
+    // A second copy of the private key, wrapped under a locally generated
+    // recovery code. The server stores it as opaque ciphertext; only this
+    // recovery code can open it, and the code is never transmitted.
+    let recovery_code = nivrit_crypto::recovery::generate_recovery_code();
+    let recovery_key = nivrit_crypto::recovery::derive_recovery_key(&recovery_code, email);
+    let (encrypted_private_key_recovery, private_key_recovery_nonce) =
+        nivrit_crypto::recovery::encrypt_private_key_for_recovery(
+            &private_key_plaintext,
+            &recovery_key,
+        )?;
+
+    // The password itself is not sent; the server only ever sees these hashes.
+    let auth_hash = nivrit_crypto::derive_auth_hash(password.as_bytes(), email);
+    let recovery_auth_hash = nivrit_crypto::derive_recovery_auth_hash(&recovery_code, email);
+
     let req = serde_json::json!({
         "email": email,
-        "password": password,
+        "auth_hash": STANDARD.encode(*auth_hash),
         "name": name,
         "public_key": STANDARD.encode(&public_key),
         "encrypted_private_key": STANDARD.encode(&encrypted_private_key),
         "private_key_nonce": STANDARD.encode(&private_key_nonce),
         "private_key_algorithm": "aes256gcm-v1",
+        "recovery_auth_hash": STANDARD.encode(*recovery_auth_hash),
+        "encrypted_private_key_recovery": STANDARD.encode(&encrypted_private_key_recovery),
+        "private_key_recovery_nonce": STANDARD.encode(&private_key_recovery_nonce),
+        "private_key_recovery_algorithm": "aes256gcm-v1",
     });
 
     let res: serde_json::Value = client
@@ -696,7 +773,6 @@ async fn register(
     config.private_key_algorithm = Some("aes256gcm-v1".into());
     config.private_key = Some(STANDARD.encode(&private_key_plaintext));
 
-    let recovery_code = res["recovery_code"].as_str().unwrap_or("");
     #[derive(Serialize)]
     struct RegisterOut {
         email: String,
@@ -725,7 +801,7 @@ async fn login(
 ) -> anyhow::Result<()> {
     let req = serde_json::json!({
         "email": email,
-        "password": password,
+        "auth_hash": STANDARD.encode(*nivrit_crypto::derive_auth_hash(password.as_bytes(), email)),
     });
 
     let res: serde_json::Value = client
@@ -2348,11 +2424,32 @@ async fn rotate_key(
         }));
     }
 
+    // Rotation invalidates the old recovery code along with the old key pair, so
+    // mint a fresh one and re-wrap the new private key under it. Uploading this
+    // in the same request is what keeps a later password reset from restoring a
+    // key that no longer opens anything.
+    let email = config
+        .email
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("email not available; log in again"))?;
+    let recovery_code = nivrit_crypto::recovery::generate_recovery_code();
+    let recovery_key = nivrit_crypto::recovery::derive_recovery_key(&recovery_code, email);
+    let (encrypted_private_key_recovery, private_key_recovery_nonce) =
+        nivrit_crypto::recovery::encrypt_private_key_for_recovery(
+            &new_private_key_plaintext,
+            &recovery_key,
+        )?;
+    let recovery_auth_hash = nivrit_crypto::derive_recovery_auth_hash(&recovery_code, email);
+
     let req = serde_json::json!({
         "public_key": STANDARD.encode(&new_public_key),
         "encrypted_private_key": STANDARD.encode(&new_encrypted_private_key),
         "private_key_nonce": STANDARD.encode(&new_private_key_nonce),
         "private_key_algorithm": "aes256gcm-v1",
+        "encrypted_private_key_recovery": STANDARD.encode(&encrypted_private_key_recovery),
+        "private_key_recovery_nonce": STANDARD.encode(&private_key_recovery_nonce),
+        "private_key_recovery_algorithm": "aes256gcm-v1",
+        "recovery_auth_hash": STANDARD.encode(*recovery_auth_hash),
         "project_keys": rotated_project_keys,
     });
 
@@ -2380,16 +2477,19 @@ async fn rotate_key(
     struct RotateOut {
         rotated: bool,
         re_encrypted: usize,
+        recovery_code: String,
     }
     print_output(
         format,
         &format!(
-            "rotated key pair; re-encrypted {} project keys",
-            rotated_project_keys.len()
+            "rotated key pair; re-encrypted {} project keys\nnew recovery code: {}\nstore it now - it is not recoverable and replaces your previous code",
+            rotated_project_keys.len(),
+            recovery_code
         ),
         &RotateOut {
             rotated,
             re_encrypted: rotated_project_keys.len(),
+            recovery_code: recovery_code.clone(),
         },
     );
     Ok(())
@@ -2508,6 +2608,45 @@ mod tests {
         assert!(decrypt_private_key(&encrypted, &nonce, "wrong-password").is_err());
     }
 
+    /// The config file holds the plaintext private key and every project key,
+    /// so it must never be group- or world-readable.
+    #[test]
+    #[cfg(unix)]
+    fn config_file_is_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join(".nivrit");
+        let path = nested.join("config.json");
+
+        create_private_dir(&nested).unwrap();
+        write_private_file(&path, b"{}").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "config must be owner read/write only");
+
+        let dir_mode = std::fs::metadata(&nested).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "config directory must be owner-only");
+    }
+
+    /// A config written by an older version with the default mode must be
+    /// tightened on the next save, not left readable.
+    #[test]
+    #[cfg(unix)]
+    fn existing_world_readable_config_is_tightened() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, b"{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_private_file(&path, b"{}").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
     #[test]
     fn self_encapsulated_project_key_roundtrip() {
         let project_key = nivrit_crypto::keys::random_bytes::<32>();
@@ -2520,6 +2659,6 @@ mod tests {
         let decoded: EncapsulatedProjectKey = serde_json::from_slice(&json).unwrap();
         let recovered = decapsulate_project_key_hybrid(&decoded, &private_key).unwrap();
 
-        assert_eq!(project_key, recovered);
+        assert_eq!(project_key, *recovered);
     }
 }

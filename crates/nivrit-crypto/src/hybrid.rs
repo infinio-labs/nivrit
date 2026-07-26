@@ -6,6 +6,7 @@ use ml_kem::{
 use nivrit_core::{NivritError, Result};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::envelope::EncapsulatedProjectKey;
 use crate::suite::CryptoSuite;
@@ -26,12 +27,21 @@ const HYBRID_PUBLIC_KEY_LEN: usize = 1 + X25519_PUBLIC_LEN + ML_KEM_PUBLIC_LEN;
 /// A user key pair that combines an X25519 static DH key with an ML-KEM-768
 /// KEM key. The resulting public key is safe against both classical and
 /// post-quantum adversaries.
+/// Dropping this scrubs the secret halves. `x25519_dalek::StaticSecret` already
+/// zeroizes itself; the ML-KEM seed is a plain array and would otherwise be left
+/// in freed memory, where a core dump or heap reuse could expose it.
 #[derive(Clone)]
 pub struct HybridUserKeyPair {
     pub x25519_private: X25519StaticSecret,
     pub x25519_public: X25519PublicKey,
     pub ml_kem_seed: [u8; ML_KEM_SEED_LEN],
     pub ml_kem_public: [u8; ML_KEM_PUBLIC_LEN],
+}
+
+impl Drop for HybridUserKeyPair {
+    fn drop(&mut self) {
+        self.ml_kem_seed.zeroize();
+    }
 }
 
 impl std::fmt::Debug for HybridUserKeyPair {
@@ -77,12 +87,12 @@ impl HybridUserKeyPair {
     /// encrypted under the user's password.
     ///
     /// Format: `[tag:1][x25519_secret:32][ml_kem_seed:64]`.
-    pub fn serialize_private_key(&self) -> Vec<u8> {
+    pub fn serialize_private_key(&self) -> Zeroizing<Vec<u8>> {
         let mut out = Vec::with_capacity(1 + X25519_SECRET_LEN + ML_KEM_SEED_LEN);
         out.push(HYBRID_KEY_TAG);
         out.extend_from_slice(self.x25519_private.as_bytes());
         out.extend_from_slice(&self.ml_kem_seed);
-        out
+        Zeroizing::new(out)
     }
 
     /// Recover a hybrid key pair from serialized private-key bytes.
@@ -234,7 +244,7 @@ pub fn reencrypt_project_key_hybrid(
 pub fn decapsulate_project_key_hybrid(
     encapsulated: &EncapsulatedProjectKey,
     recipient_private_key: &[u8],
-) -> Result<[u8; 32]> {
+) -> Result<Zeroizing<[u8; 32]>> {
     if encapsulated.suite != HYBRID_SUITE_ID {
         return Err(NivritError::Crypto(format!(
             "unsupported hybrid suite: {}",
@@ -288,6 +298,7 @@ pub fn decapsulate_project_key_hybrid(
 
     plaintext
         .try_into()
+        .map(Zeroizing::new)
         .map_err(|_| NivritError::Crypto("decapsulated project key has wrong length".into()))
 }
 
@@ -328,7 +339,7 @@ mod tests {
 
         let decapsulated =
             decapsulate_project_key_hybrid(&encapsulated, &recipient_private).unwrap();
-        assert_eq!(project_key, decapsulated);
+        assert_eq!(project_key, *decapsulated);
     }
 
     #[test]
@@ -376,7 +387,7 @@ mod tests {
         let new_enc = reencrypt_project_key_hybrid(&old_enc, &old_private, &new_public).unwrap();
 
         let recovered = decapsulate_project_key_hybrid(&new_enc, &new_private).unwrap();
-        assert_eq!(project_key, recovered);
+        assert_eq!(project_key, *recovered);
     }
 
     #[test]

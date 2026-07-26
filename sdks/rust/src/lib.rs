@@ -416,6 +416,7 @@ pub fn decapsulate_project_key(
     let encapsulated: EncapsulatedProjectKey = serde_json::from_slice(&json_bytes)?;
     let private_key = b64_decode(private_key_b64)?;
     decapsulate_project_key_hybrid(&encapsulated, &private_key)
+        .map(|key| *key)
         .map_err(|e| NivritError::Crypto(e.to_string()))
 }
 

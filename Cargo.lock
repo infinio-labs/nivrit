@@ -2545,6 +2545,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "urlencoding",
@@ -2585,6 +2586,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
