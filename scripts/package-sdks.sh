@@ -14,7 +14,7 @@ cd "$ROOT_DIR/sdks/python"
 if command -v python3 >/dev/null 2>&1; then
   if ! python3 -m build --help >/dev/null 2>&1; then
     echo "Installing python build module..."
-    python3 -m pip install -q --break-system-packages build
+    python3 -m pip install -q --break-system-packages build==1.5.0
   fi
   python3 -m build --outdir "$OUT_DIR"
 else

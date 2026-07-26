@@ -10,7 +10,7 @@ development environment, run tests, and submit changes.
    - [Bun](https://bun.sh/) (latest stable) — used for all TypeScript/JavaScript
      projects (web UI, VS Code extension, Node.js SDK)
    - Docker + Docker Compose (for Postgres)
-   - `sqlx-cli` (`cargo install sqlx-cli --no-default-features --features native-tls,postgres`)
+   - `sqlx-cli` (`cargo install sqlx-cli --version '=0.9.0' --locked --no-default-features --features native-tls,postgres`)
    - `wasm-pack` (optional; only needed to rebuild the web WASM module)
 
 2. Clone the repository and configure the environment:
