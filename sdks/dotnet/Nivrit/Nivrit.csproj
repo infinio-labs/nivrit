@@ -10,6 +10,7 @@
     <Description>Nivrit secrets SDK for .NET</Description>
     <RepositoryUrl>https://github.com/infiniolabs/nivrit</RepositoryUrl>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <RestoreLockedMode>true</RestoreLockedMode>
   </PropertyGroup>
 
   <!-- Platform helper binaries dropped in by build-resources.sh and embedded as

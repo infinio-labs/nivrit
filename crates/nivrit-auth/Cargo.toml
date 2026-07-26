@@ -23,10 +23,10 @@ tracing = { workspace = true }
 axum = { workspace = true }
 
 # TOTP / 2FA
-totp-rs = { version = "5.7.0", features = ["otpauth", "gen_secret"] }
+totp-rs = { version = "=5.7.1", features = ["otpauth", "gen_secret"] }
 
 # Email
-lettre = { version = "0.11.15", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
+lettre = { version = "=0.11.22", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
 
 # TOTP secret encryption
 aes-gcm = { workspace = true }

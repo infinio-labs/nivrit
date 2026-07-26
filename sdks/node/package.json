@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "test": "node test/smoke.js",
-    "package": "bun pack"
+    "package": "bun pm pack"
   },
   "engines": {
     "node": ">=18.0.0"

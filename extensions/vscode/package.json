@@ -128,9 +128,9 @@
     "vscode:prepublish": "bun run build:wasm && bun run compile"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
-    "@types/vscode": "^1.80.0",
-    "@vscode/vsce": "^3.0.0",
-    "typescript": "^7.0.2"
+    "@types/node": "26.1.1",
+    "@types/vscode": "1.80.0",
+    "@vscode/vsce": "3.9.2",
+    "typescript": "7.0.2"
   }
 }
