@@ -42,7 +42,7 @@ jobs:
             os: windows-latest
             asset: nivrit-crypto-helper-windows-x86_64.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -94,7 +94,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -185,7 +185,7 @@ jobs:
       matrix:
         sdk: [ruby, dotnet, java, elixir]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download helper
         uses: actions/download-artifact@v8
@@ -256,7 +256,7 @@ jobs:
       matrix:
         sdk: [node, python, go, ruby, java, dotnet, elixir]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download all helper binaries
         uses: actions/download-artifact@v8
