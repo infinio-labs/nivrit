@@ -118,8 +118,8 @@ jobs:
           cd crates/nivrit-api
           cargo run --release > "$RUNNER_TEMP/nivrit-api.log" 2>&1 &
           api_pid=$!
-          for i in {1..180}; do
-            if curl -fsS http://localhost:4000/health; then
+          for i in {1..600}; do
+            if curl -fsS http://localhost:4000/health >/dev/null 2>&1; then
               exit 0
             fi
             if ! kill -0 "$api_pid" 2>/dev/null; then
@@ -128,6 +128,7 @@ jobs:
             fi
             sleep 1
           done
+          echo "API did not become healthy within 10 minutes"
           cat "$RUNNER_TEMP/nivrit-api.log"
           exit 1
 
@@ -327,12 +328,12 @@ jobs:
         run: |
           cp -r ../../helpers .
           bash scripts/build-platform-packages.sh
-          sdk_tgz="$PWD/$(bun pack --silent | tail -1)"
-          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pack --silent | tail -1)"
+          sdk_tgz="$PWD/$(bun pm pack --quiet)"
+          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pm pack --quiet)"
           proj=$(mktemp -d)
           cp test/packaged.js "$proj/packaged.js"
           cd "$proj"
-          bun init
+          bun init --yes
           bun add --silent "$sdk_tgz" "$helper_tgz"
           env -u NIVRIT_CRYPTO_HELPER node packaged.js
 
