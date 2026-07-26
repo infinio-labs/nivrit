@@ -61,7 +61,7 @@ This document captures the implementation progress across all roadmap phases, te
 | Item | Status | Notes |
 |------|--------|-------|
 | WASM crypto crate | ✅ Done | `crates/nivrit-web-crypto` compiles `nivrit-crypto` to `wasm32-unknown-unknown`. |
-| Vite WASM integration | ✅ Done | `vite-plugin-wasm` and `vite-plugin-top-level-await` load the `.wasm` bundle in the browser. |
+| Vite WASM integration | ✅ Done | `vite-plugin-wasm` loads the `.wasm` bundle; Vite's `esnext` target preserves native top-level await. |
 | Argon2id in the browser | ✅ Done | `generate_user_keypair` / `decrypt_private_key` run Argon2id inside WASM. |
 | Hybrid key generation in browser | ✅ Done | Web users generate `X25519 + ML-KEM-768` key pairs. |
 | Project-key sharing in browser | ✅ Done | `inviteProjectMember` encapsulates the project key to a recipient's hybrid public key. |
