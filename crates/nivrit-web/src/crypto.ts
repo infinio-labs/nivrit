@@ -1,4 +1,5 @@
 import type {
+  assess_password as AssessPasswordFn,
   derive_auth_hash as DeriveAuthHashFn,
   derive_recovery_auth_hash as DeriveRecoveryAuthHashFn,
   generate_registration_material as GenerateRegistrationMaterialFn,
@@ -17,6 +18,7 @@ let wasmModule: {
   init_panic_hook: typeof InitPanicHookFn;
   generate_user_keypair: typeof GenerateUserKeypairFn;
   generate_registration_material: typeof GenerateRegistrationMaterialFn;
+  assess_password: typeof AssessPasswordFn;
   derive_auth_hash: typeof DeriveAuthHashFn;
   derive_recovery_auth_hash: typeof DeriveRecoveryAuthHashFn;
   reset_password_material: typeof ResetPasswordMaterialFn;
@@ -146,6 +148,23 @@ export async function generateRegistrationMaterial(
 ): Promise<RegistrationMaterial> {
   const wasm = getWasm();
   return wasm.generate_registration_material(password, email) as unknown as RegistrationMaterial;
+}
+
+export interface WasmPasswordAssessment {
+  acceptable: boolean;
+  strength: 'weak' | 'fair' | 'strong';
+  message?: string;
+}
+
+/**
+ * Assess a master password using the shared Rust policy.
+ *
+ * Synchronous: the check is plain string inspection, not a key derivation, so it
+ * is cheap enough to run on every keystroke.
+ */
+export function assessPasswordWasm(password: string, email?: string): WasmPasswordAssessment {
+  const wasm = getWasm();
+  return wasm.assess_password(password, email ?? null) as unknown as WasmPasswordAssessment;
 }
 
 /** The opaque credential the server accepts in place of the password. */

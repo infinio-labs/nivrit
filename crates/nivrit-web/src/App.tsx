@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { KeyRound, Loader2, Mail, Shield } from './components/icons';
 import { initCrypto } from './crypto';
-import { oauthAuthorizeUrl } from './api';
+import { SessionExpiredError, oauthAuthorizeUrl } from './api';
 import {
   clearSession,
   createEnvironmentSession,
@@ -37,6 +37,7 @@ import { Dashboard } from './components/Dashboard';
 import { SecretsTab } from './components/SecretsTab';
 import { MembersTab } from './components/MembersTab';
 import { SettingsTab } from './components/SettingsTab';
+import { AccessTokensTab } from './components/AccessTokensTab';
 
 interface Org {
   id: string;
@@ -59,10 +60,14 @@ interface Environment {
 }
 
 type View = 'auth' | 'mfa' | 'oauth' | 'forgot' | 'reset' | 'dashboard';
-type Tab = 'secrets' | 'members' | 'settings';
+type Tab = 'secrets' | 'members' | 'tokens' | 'settings';
 
 function App() {
   const [loading, setLoading] = useState(true);
+  // One in-flight guard for the auth forms. Every one of them runs Argon2id in
+  // WASM, which is measured in seconds, so without this a second click starts a
+  // second derivation and can register twice or trip the login rate limiter.
+  const [busy, setBusy] = useState<string>('');
   const [view, setView] = useState<View>('auth');
   const [session, setSession] = useState<Session | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -244,9 +249,44 @@ function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }
 
+  /**
+   * Let the browser paint before running blocking work.
+   *
+   * Argon2id runs synchronously inside the WASM module on the main thread, so
+   * setting a "working" flag and calling straight into it would freeze the page
+   * before React ever renders the flag. Yielding one frame first means the user
+   * sees the pending state instead of a dead UI.
+   */
+  async function withBusy<T>(label: string, work: () => Promise<T>): Promise<T | undefined> {
+    if (busy) return undefined;
+    setBusy(label);
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+    try {
+      return await work();
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        handleSessionExpired();
+        return undefined;
+      }
+      showToast(e instanceof Error ? e.message : String(e), 'error');
+      return undefined;
+    } finally {
+      setBusy('');
+    }
+  }
+
+  /** The server rejected our token: drop keys and return to sign-in. */
+  function handleSessionExpired() {
+    clearSession();
+    setSession(null);
+    resetDashboard();
+    setView('auth');
+    showToast('Your session has expired. Please sign in again.', 'error');
+  }
+
   async function handleAuth(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy(isRegister ? 'Creating your vault…' : 'Signing in…', async () => {
       if (isRegister) {
         const { recoveryCode: rc } = await registerSession(email, password, name || undefined);
         setRecoveryCode(rc);
@@ -259,22 +299,21 @@ function App() {
           return;
         }
       }
+      setPassword('');
       setSession(getSession());
       setView('dashboard');
-    } catch {
-      showToast(isRegister ? 'registration failed' : 'login failed', 'error');
-    }
+    });
   }
 
   async function handleMfa(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy('Verifying…', async () => {
       await loginTotpSession(tempToken, totpCode, mfaPassword);
+      setMfaPassword('');
+      setTotpCode('');
       setSession(getSession());
       setView('dashboard');
-    } catch {
-      showToast('invalid TOTP code', 'error');
-    }
+    });
   }
 
   async function handleOAuth(provider: 'google' | 'github') {
@@ -288,7 +327,7 @@ function App() {
 
   async function handleOAuthComplete(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy('Setting up your vault…', async () => {
       const { recoveryCode: rc } = await processOAuthCallback(
         oauthProvider,
         oauthCode,
@@ -296,34 +335,31 @@ function App() {
         password
       );
       if (rc) setRecoveryCode(rc);
+      setPassword('');
       setSession(getSession());
       setView('dashboard');
-    } catch {
-      showToast('OAuth login failed', 'error');
-    }
+    });
   }
 
   async function handleForgot(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy('Sending…', async () => {
       await forgotPasswordSession(email);
       showToast('If this email exists, a reset link has been sent.', 'success');
       setView('auth');
-    } catch {
-      showToast('failed to send reset email', 'error');
-    }
+    });
   }
 
   async function handleReset(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy('Recovering your keys…', async () => {
       await resetPasswordSession(resetToken, recoveryCodeInput, password);
+      setPassword('');
+      setRecoveryCodeInput('');
       setSession(getSession());
       setView('dashboard');
-      showToast('password reset successfully', 'success');
-    } catch {
-      showToast('password reset failed', 'error');
-    }
+      showToast('Password reset. You are signed in.', 'success');
+    });
   }
 
   function handleLogout() {
@@ -359,16 +395,14 @@ function App() {
 
   async function handleSetSecret(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy('Encrypting…', async () => {
       await setEncryptedSecret(selectedProjectId, selectedEnvironmentId, secretKey, secretValue);
       setSecretKey('');
       setSecretValue('');
       setEditingSecretKey('');
       await refreshSecrets();
       showToast('secret saved', 'success');
-    } catch {
-      showToast('failed to save secret', 'error');
-    }
+    });
   }
 
   function handleStartEdit(secret: SecretEntry) {
@@ -581,6 +615,7 @@ function App() {
             onSubmit={handleAuth}
             onOAuth={handleOAuth}
             onForgot={() => setView('forgot')}
+            busy={busy}
           />
         </AuthLayout>
       )}
@@ -613,8 +648,8 @@ function App() {
                   required
                 />
               </div>
-              <Button type="submit" className="w-full">
-                Verify
+              <Button type="submit" className="w-full" disabled={Boolean(busy)}>
+                {busy || 'Verify'}
               </Button>
             </form>
           </Card>
@@ -650,8 +685,8 @@ function App() {
                   minLength={8}
                 />
               </div>
-              <Button type="submit" className="w-full">
-                Continue
+              <Button type="submit" className="w-full" disabled={Boolean(busy)}>
+                {busy || 'Continue'}
               </Button>
             </form>
           </Card>
@@ -682,8 +717,8 @@ function App() {
                   required
                 />
               </div>
-              <Button type="submit" className="w-full">
-                Send reset link
+              <Button type="submit" className="w-full" disabled={Boolean(busy)}>
+                {busy || 'Send reset link'}
               </Button>
               <Button
                 type="button"
@@ -734,8 +769,8 @@ function App() {
                   minLength={8}
                 />
               </div>
-              <Button type="submit" className="w-full">
-                Reset password
+              <Button type="submit" className="w-full" disabled={Boolean(busy)}>
+                {busy || 'Reset password'}
               </Button>
             </form>
           </Card>
@@ -808,6 +843,9 @@ function App() {
               setInviteRole={setInviteRole}
               onInvite={handleInvite}
             />
+          )}
+          {activeTab === 'tokens' && (
+            <AccessTokensTab onError={(m) => showToast(m, 'error')} />
           )}
           {activeTab === 'settings' && (
             <SettingsTab

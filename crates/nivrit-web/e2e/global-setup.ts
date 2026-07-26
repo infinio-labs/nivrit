@@ -9,7 +9,9 @@ const SUFFIX = Date.now().toString();
 const HOME_DIR = '/tmp/nivrit-web-test';
 const ALICE_EMAIL = `alice-web-${SUFFIX}@example.com`;
 const BOB_EMAIL = `bob-web-${SUFFIX}@example.com`;
-const PASSWORD = 'WebTest123!';
+// Must satisfy the shared password policy in nivrit-crypto: at least 12
+// characters, and not derived from the account email.
+const PASSWORD = 'web-test-glacier-tuesday';
 
 function run(cmd: string): string {
   return execSync(cmd, { cwd: ROOT, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'inherit'] }).trim();

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import {
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -13,7 +14,7 @@ import { Button, Separator } from './ui';
 import { ContextSelect } from './ContextSelect';
 import type { Session } from '../session';
 
-type Tab = 'secrets' | 'members' | 'settings';
+type Tab = 'secrets' | 'members' | 'tokens' | 'settings';
 
 interface DashboardProps {
   session: Session;
@@ -35,6 +36,7 @@ interface DashboardProps {
 const navItems: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'secrets', label: 'Secrets', icon: LayoutDashboard },
   { id: 'members', label: 'Members', icon: Users },
+  { id: 'tokens', label: 'Access tokens', icon: KeyRound },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 

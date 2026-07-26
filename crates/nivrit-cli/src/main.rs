@@ -708,6 +708,19 @@ async fn register(
     password: &str,
     name: Option<String>,
 ) -> anyhow::Result<()> {
+    // The server sees only a derived hash and cannot judge the password behind
+    // it, so this check is the only enforcement that exists for CLI users. Same
+    // implementation the browser uses, via WASM.
+    let assessment = nivrit_crypto::password_policy::assess_password(password, Some(email));
+    if !assessment.acceptable {
+        anyhow::bail!(
+            "{}",
+            assessment
+                .message
+                .unwrap_or_else(|| "choose a stronger master password".into())
+        );
+    }
+
     let keypair = HybridUserKeyPair::generate();
     let private_key_plaintext = keypair.serialize_private_key();
     let (encrypted_private_key, private_key_nonce) =

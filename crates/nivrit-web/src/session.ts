@@ -36,9 +36,21 @@ import {
   setupTotp,
   verifyResetToken,
   verifyTotp,
+  createPat,
+  listPats,
+  revokePat,
+  listSecretVersions,
+  restoreSecretVersion,
+  listAuditLogs,
+  verifyAuditLog,
+  type AuditLogEntry,
+  type CreatedPat,
   type LoginResult,
   type OAuthCallbackResult,
+  type PatMetadata,
+  type SecretVersion,
 } from './api';
+import { assertAcceptablePassword } from './password-policy';
 
 export interface SecretEntry {
   id: string;
@@ -129,6 +141,11 @@ export async function registerSession(
   password: string,
   name?: string
 ): Promise<{ session: Session; recoveryCode: string }> {
+  // Enforced here rather than in the form, so every caller is covered, and here
+  // rather than on the server, which under split derivation only ever sees a
+  // fixed-width hash and cannot judge the password behind it.
+  assertAcceptablePassword(password, email);
+
   // One WASM call produces the keypair, both wrapped copies of the private key,
   // and both opaque credentials. The recovery code is generated here, not by
   // the server, and is returned for one-time display to the user.
@@ -163,6 +180,7 @@ export async function resetPasswordSession(
   // The email comes back with the token check: both derivations are salted with
   // it, and the user does not have to retype it on the reset form.
   const { email } = await verifyResetToken(token);
+  assertAcceptablePassword(newPassword, email);
   const recoveryAuthHash = await deriveRecoveryAuthHash(recoveryCode, email);
 
   // Fetch the recovery blob, then unwrap and re-wrap the private key locally.
@@ -200,6 +218,8 @@ export async function processOAuthCallback(
     const s = await buildSession(result, masterPassword);
     return { session: s };
   }
+
+  assertAcceptablePassword(masterPassword, result.email);
 
   const material = await generateRegistrationMaterial(masterPassword, result.email);
   const setup = await oauthSetup({
@@ -386,3 +406,79 @@ function getSessionOrThrow(): Session {
 }
 
 export { hybridSuiteId };
+
+
+// Personal access tokens
+//
+// The only way an account created in the browser can obtain a credential for
+// the CLI, the SDKs, or the VS Code extension.
+
+export async function listPatsSession(): Promise<PatMetadata[]> {
+  return listPats(getSessionOrThrow().token);
+}
+
+export async function createPatSession(
+  name: string,
+  expiresInDays?: number
+): Promise<CreatedPat> {
+  return createPat(getSessionOrThrow().token, name, expiresInDays);
+}
+
+export async function revokePatSession(tokenId: string): Promise<void> {
+  return revokePat(getSessionOrThrow().token, tokenId);
+}
+
+// Secret version history
+
+export interface DecryptedSecretVersion {
+  version: number;
+  value: string;
+  createdAt: string;
+}
+
+/**
+ * Version history for one secret, decrypted locally.
+ *
+ * The server returns ciphertext per version and has no idea what any of it says;
+ * the project key never leaves this device.
+ */
+export async function listSecretVersionsSession(
+  projectId: string,
+  environmentId: string,
+  key: string
+): Promise<DecryptedSecretVersion[]> {
+  const s = getSessionOrThrow();
+  const projectKey = s.projects.get(projectId);
+  if (!projectKey) throw new Error('project key unavailable; sign in again');
+
+  const versions = await listSecretVersions(s.token, projectId, environmentId, key);
+  return Promise.all(
+    versions.map(async (v: SecretVersion) => ({
+      version: v.version,
+      value: await decryptValue(v.encrypted_value, v.nonce, projectKey),
+      createdAt: v.created_at,
+    }))
+  );
+}
+
+export async function restoreSecretVersionSession(
+  projectId: string,
+  environmentId: string,
+  key: string,
+  version: number
+): Promise<void> {
+  return restoreSecretVersion(getSessionOrThrow().token, projectId, environmentId, key, version);
+}
+
+// Audit log
+
+export async function listAuditLogsSession(projectId: string): Promise<AuditLogEntry[]> {
+  return listAuditLogs(getSessionOrThrow().token, projectId);
+}
+
+export async function verifyAuditLogSession(
+  projectId: string,
+  logId: string
+): Promise<{ valid: boolean; reason: string | null }> {
+  return verifyAuditLog(getSessionOrThrow().token, projectId, logId);
+}

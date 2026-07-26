@@ -127,6 +127,30 @@ pub fn generate_registration_material(password: &str, email: &str) -> Result<JsV
     })?)
 }
 
+/// Result of assessing a candidate master password.
+#[derive(Serialize, Deserialize)]
+pub struct PasswordAssessment {
+    pub acceptable: bool,
+    pub strength: String,
+    pub message: Option<String>,
+}
+
+/// Assess a master password against Nivrit's policy.
+///
+/// Shares one implementation with the CLI (`nivrit_crypto::password_policy`) so
+/// that a password accepted when registering in the browser is also accepted
+/// when changing it from the command line. The server cannot perform this check
+/// at all — it only ever sees a derived hash.
+#[wasm_bindgen]
+pub fn assess_password(password: &str, email: Option<String>) -> Result<JsValue, JsValue> {
+    let assessment = nivrit_crypto::password_policy::assess_password(password, email.as_deref());
+    Ok(serde_wasm_bindgen::to_value(&PasswordAssessment {
+        acceptable: assessment.acceptable,
+        strength: assessment.strength.as_str().to_string(),
+        message: assessment.message,
+    })?)
+}
+
 /// Derive the opaque credential the server accepts in place of the password.
 #[wasm_bindgen]
 pub fn derive_auth_hash(password: &str, email: &str) -> String {

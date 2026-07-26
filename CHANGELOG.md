@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reset, and registration decrypted the user's private key server-side — so a
   malicious or compromised server could have read every secret. Recovery codes
   are now generated client-side and never transmitted either.
+- Master-password policy is enforced again. Split derivation means the server
+  receives a fixed-width hash and cannot judge the password behind it, so the
+  previous server-side length check no longer had anything to inspect. The rules
+  now live in `nivrit-crypto` and are shared by the CLI and, via WASM, the
+  browser — one implementation, so the two cannot drift.
 - Argon2id now runs on the blocking pool instead of the async runtime, where it
   parked worker threads and starved unrelated requests.
 - Registration is rate-limited. It was unauthenticated and cost four 64 MiB
@@ -48,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Access token management in the web UI. An account created in the browser
+  previously had no way to obtain a credential for the CLI, the SDKs, or the VS
+  Code extension.
+- A React error boundary. An unexpected render error showed a blank page, which
+  in a secret manager is indistinguishable from a failed decryption; it now
+  explains what happened and drops in-memory keys.
+- Session helpers for secret version history and the signed audit log, ahead of
+  the UI for them.
 - Architecture Decision Records in `docs/adr/`, covering the decisions whose
   rationale is not recoverable from the code: no SSR, split-derivation auth, the
   minimal frontend runtime, the crypto-helper subprocess, hybrid post-quantum
@@ -73,8 +86,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `devDependencies` where it belongs, and inlined the 25 icons used from
   `lucide-react`.
 - API client errors now carry the server's message instead of a fixed string, and
-  a 401 raises `SessionExpiredError` so the UI can sign the user out rather than
+  a 401 raises `SessionExpiredError` so the UI signs the user out rather than
   showing a generic failure.
+- Auth forms show progress and refuse double submission. Each one runs Argon2id
+  in WASM on the main thread, so the page froze for seconds with no feedback and
+  a second click started a second derivation.
+- The recovery code dialog requires an explicit acknowledgement and offers a
+  download. It is generated client-side and unrecoverable once dismissed.
+- The web client sets a description, favicon, theme colour, `noindex`, and a
+  `noscript` explanation.
 - The API container runs as an unprivileged user.
 - Release builds use `codegen-units = 1` and strip symbols for smaller binaries.
 

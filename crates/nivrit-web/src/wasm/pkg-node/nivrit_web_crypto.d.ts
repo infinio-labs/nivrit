@@ -2,6 +2,16 @@
 /* eslint-disable */
 
 /**
+ * Assess a master password against Nivrit's policy.
+ *
+ * Shares one implementation with the CLI (`nivrit_crypto::password_policy`) so
+ * that a password accepted when registering in the browser is also accepted
+ * when changing it from the command line. The server cannot perform this check
+ * at all — it only ever sees a derived hash.
+ */
+export function assess_password(password: string, email?: string | null): any;
+
+/**
  * Decapsulate a project key using the recipient's plaintext hybrid private key.
  */
 export function decapsulate_project_key(encapsulated: any, private_key_b64: string): any;

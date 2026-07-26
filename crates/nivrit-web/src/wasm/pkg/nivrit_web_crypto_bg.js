@@ -1,4 +1,35 @@
 /**
+ * Assess a master password against Nivrit's policy.
+ *
+ * Shares one implementation with the CLI (`nivrit_crypto::password_policy`) so
+ * that a password accepted when registering in the browser is also accepted
+ * when changing it from the command line. The server cannot perform this check
+ * at all — it only ever sees a derived hash.
+ * @param {string} password
+ * @param {string | null} [email]
+ * @returns {any}
+ */
+export function assess_password(password, email) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(password, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(email) ? 0 : passStringToWasm0(email, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.assess_password(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        if (r2) {
+            throw takeObject(r1);
+        }
+        return takeObject(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Decapsulate a project key using the recipient's plaintext hybrid private key.
  * @param {any} encapsulated
  * @param {string} private_key_b64

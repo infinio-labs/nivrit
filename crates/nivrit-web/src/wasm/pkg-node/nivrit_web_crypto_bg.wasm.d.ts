@@ -1,6 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const assess_password: (a: number, b: number, c: number, d: number, e: number) => void;
 export const decapsulate_project_key: (a: number, b: number, c: number, d: number) => void;
 export const decrypt_private_key: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const decrypt_value: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
