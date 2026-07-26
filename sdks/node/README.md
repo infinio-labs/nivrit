@@ -1,7 +1,7 @@
 # Nivrit Node.js SDK
 
 ```bash
-bun add @nivrit/sdk
+bun add @nivrit/sdk@0.1.0
 ```
 
 (Works with npm/yarn too — bun is the project's package manager.)

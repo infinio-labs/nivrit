@@ -1,7 +1,7 @@
 # Nivrit Ruby SDK
 
 ```bash
-gem install nivrit_sdk
+gem install nivrit_sdk -v 0.1.0
 ```
 
 ## Usage

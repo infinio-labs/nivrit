@@ -33,13 +33,21 @@ public class NivritSession
         var memberships = await Client.ListMyProjectsAsync();
         var membershipMap = new Dictionary<string, JsonNode>();
         foreach (var m in memberships!.AsArray())
-            membershipMap[(string?)m!["project_id"]!] = m!;
+        {
+            var projectId = (string?)m?["project_id"]
+                ?? throw new InvalidOperationException("membership missing project_id");
+            membershipMap[projectId] = m!;
+        }
 
         var result = new List<JsonObject>();
         foreach (var p in projects!.AsArray())
         {
-            var obj = (JsonObject)p!.Deserialize<JsonNode>()!;
-            obj["membership"] = membershipMap.TryGetValue((string?)p["id"]!, out var mem) ? mem : null;
+            var project = p?.AsObject()
+                ?? throw new InvalidOperationException("invalid project");
+            var projectId = (string?)project["id"]
+                ?? throw new InvalidOperationException("project missing id");
+            var obj = (JsonObject)project.DeepClone();
+            obj["membership"] = membershipMap.TryGetValue(projectId, out var mem) ? mem : null;
             result.Add(obj);
         }
         return result;
@@ -69,10 +77,14 @@ public class NivritSession
         var result = new List<JsonObject>();
         foreach (var s in secrets!.AsArray())
         {
-            var obj = (JsonObject)s!.Deserialize<JsonNode>()!;
+            var secret = s?.AsObject()
+                ?? throw new InvalidOperationException("invalid secret");
+            var obj = (JsonObject)secret.DeepClone();
             obj["value"] = Crypto.DecryptValue(
-                (string?)s["encrypted_value"]! ?? "",
-                (string?)s["nonce"]! ?? "",
+                (string?)secret["encrypted_value"]
+                    ?? throw new InvalidOperationException("secret missing encrypted_value"),
+                (string?)secret["nonce"]
+                    ?? throw new InvalidOperationException("secret missing nonce"),
                 projectKey);
             result.Add(obj);
         }
