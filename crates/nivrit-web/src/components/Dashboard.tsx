@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import {
   KeyRound,
+  ScrollText,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -14,7 +15,7 @@ import { Button, Separator } from './ui';
 import { ContextSelect } from './ContextSelect';
 import type { Session } from '../session';
 
-type Tab = 'secrets' | 'members' | 'tokens' | 'settings';
+type Tab = 'secrets' | 'members' | 'audit' | 'tokens' | 'settings';
 
 interface DashboardProps {
   session: Session;
@@ -36,6 +37,7 @@ interface DashboardProps {
 const navItems: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'secrets', label: 'Secrets', icon: LayoutDashboard },
   { id: 'members', label: 'Members', icon: Users },
+  { id: 'audit', label: 'Audit log', icon: ScrollText },
   { id: 'tokens', label: 'Access tokens', icon: KeyRound },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];

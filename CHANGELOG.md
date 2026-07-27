@@ -81,6 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails if the results differ. This is what lets someone check that a deployment
   is serving the code in this repository — the "malicious frontend deployment"
   threat cannot be prevented from inside the app, only made detectable.
+- Audit log in the web UI, with per-entry ML-DSA-65 signature verification. The
+  signed audit trail was a headline feature no user could see. Non-admins get an
+  explanation rather than an error, since the API restricts it by design.
+- Secret version history in the web UI, with restore. Versions are decrypted in
+  the browser; the server holds the history as ciphertext it cannot read.
 - Access token management in the web UI. An account created in the browser
   previously had no way to obtain a credential for the CLI, the SDKs, or the VS
   Code extension.

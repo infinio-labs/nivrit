@@ -6,6 +6,7 @@ import {
   EyeOff,
   FileUp,
   FolderOpen,
+  Clock,
   Pencil,
   Plus,
   Trash2,
@@ -62,6 +63,7 @@ interface SecretsTabProps {
   onSetSecret: (e: React.FormEvent) => void;
   onDeleteSecret: (key: string) => void;
   onStartEdit: (secret: SecretEntry) => void;
+  onViewHistory: (key: string) => void;
   onCancelEdit: () => void;
   onOpenImport: () => void;
   newOrgName: string;
@@ -311,6 +313,7 @@ export function SecretsTab(props: SecretsTabProps) {
                         secret={s}
                         onDelete={props.onDeleteSecret}
                         onEdit={props.onStartEdit}
+                        onViewHistory={props.onViewHistory}
                       />
                     ))}
                   </tbody>
@@ -346,10 +349,12 @@ function SecretRow({
   secret,
   onDelete,
   onEdit,
+  onViewHistory,
 }: {
   secret: SecretEntry;
   onDelete: (k: string) => void;
   onEdit: (s: SecretEntry) => void;
+  onViewHistory: (key: string) => void;
 }) {
   const [revealed, setRevealed] = useState(false);
 
@@ -373,6 +378,16 @@ function SecretRow({
             aria-label="Edit"
           >
             <Pencil size={16} />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => onViewHistory(secret.key)}
+            title="History"
+            aria-label="Version history"
+          >
+            <Clock size={16} />
           </Button>
           <Button
             type="button"

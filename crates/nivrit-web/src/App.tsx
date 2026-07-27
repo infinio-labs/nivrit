@@ -38,6 +38,8 @@ import { SecretsTab } from './components/SecretsTab';
 import { MembersTab } from './components/MembersTab';
 import { SettingsTab } from './components/SettingsTab';
 import { AccessTokensTab } from './components/AccessTokensTab';
+import { AuditLogTab } from './components/AuditLogTab';
+import { SecretHistoryModal } from './components/SecretHistoryModal';
 
 interface Org {
   id: string;
@@ -60,7 +62,7 @@ interface Environment {
 }
 
 type View = 'auth' | 'mfa' | 'oauth' | 'forgot' | 'reset' | 'dashboard';
-type Tab = 'secrets' | 'members' | 'tokens' | 'settings';
+type Tab = 'secrets' | 'members' | 'audit' | 'tokens' | 'settings';
 
 function App() {
   const [loading, setLoading] = useState(true);
@@ -114,6 +116,9 @@ function App() {
   const [newProjectSlug, setNewProjectSlug] = useState('');
   const [newEnvName, setNewEnvName] = useState('');
   const [newEnvSlug, setNewEnvSlug] = useState('');
+
+  // Secret version history
+  const [historyKey, setHistoryKey] = useState('');
 
   // Import .env modal
   const [importOpen, setImportOpen] = useState(false);
@@ -814,6 +819,7 @@ function App() {
               onSetSecret={handleSetSecret}
               onDeleteSecret={handleDeleteSecret}
               onStartEdit={handleStartEdit}
+              onViewHistory={setHistoryKey}
               onCancelEdit={handleCancelEdit}
               onOpenImport={() => setImportOpen(true)}
               newOrgName={newOrgName}
@@ -842,6 +848,12 @@ function App() {
               inviteRole={inviteRole}
               setInviteRole={setInviteRole}
               onInvite={handleInvite}
+            />
+          )}
+          {activeTab === 'audit' && (
+            <AuditLogTab
+              projectId={selectedProjectId}
+              onError={(m) => showToast(m, 'error')}
             />
           )}
           {activeTab === 'tokens' && (
@@ -876,6 +888,20 @@ function App() {
             setImportContent('');
           }}
           importing={importing}
+        />
+      )}
+
+      {historyKey && (
+        <SecretHistoryModal
+          projectId={selectedProjectId}
+          environmentId={selectedEnvironmentId}
+          secretKey={historyKey}
+          onClose={() => setHistoryKey('')}
+          onRestored={() => {
+            void refreshSecrets();
+            showToast('version restored', 'success');
+          }}
+          onError={(m) => showToast(m, 'error')}
         />
       )}
 
