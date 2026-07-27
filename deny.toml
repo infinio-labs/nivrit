@@ -29,7 +29,14 @@ confidence-threshold = 0.9
 
 [bans]
 multiple-versions = "warn"
+# A dependency with no version at all is a supply-chain hole: it accepts
+# whatever the registry serves.
 wildcards = "deny"
+# Path dependencies between crates in this workspace are the exception. The
+# private ones (`publish = false`) are never resolved from a registry, so a bare
+# path is correct there. The crates that *are* published carry an exact version
+# on their path deps, which this option does not exempt.
+allow-wildcard-paths = true
 
 [advisories]
 yanked = "deny"

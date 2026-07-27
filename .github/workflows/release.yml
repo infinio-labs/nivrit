@@ -302,9 +302,10 @@ jobs:
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
 
-  # ---- Rust SDK -> crates.io (publish nivrit-crypto first, then the SDK) -----
-  # ponytail: assumes nivrit-crypto's own deps (e.g. nivrit-core) are already on
-  # crates.io. If not, add them ahead of this in dependency order, or this fails.
+  # ---- Rust SDK -> crates.io -------------------------------------------------
+  # Published in dependency order, because crates.io resolves each crate's deps
+  # from the registry rather than from this tree. Every other workspace crate is
+  # `publish = false`: the API and CLI ship as binaries and images instead.
   publish-rust:
     name: Publish Rust (crates.io)
     if: github.event.repository.private == false
@@ -316,6 +317,7 @@ jobs:
           toolchain: 1.97.1
       - name: Publish crates in dependency order
         run: |
+          cargo publish --locked -p nivrit-core
           cargo publish --locked -p nivrit-crypto
           cargo publish --locked -p nivrit-sdk
         env:

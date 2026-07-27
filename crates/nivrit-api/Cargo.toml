@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+# Server- and tooling-side crate: distributed as a binary or a container,
+# never as a library on crates.io. Saying so here means `cargo publish` in
+# the release workflow cannot push it there by accident.
+publish = false
 
 [[bin]]
 name = "nivrit-api"
