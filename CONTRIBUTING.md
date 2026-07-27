@@ -96,6 +96,20 @@ credentials independently; if they ever disagree, an account created in one
 silently cannot log in from the other, and no unit test in either language would
 notice.
 
+Browser behaviour has its own smoke test that needs no Docker:
+
+```bash
+# with an API running on :4000
+cd crates/nivrit-web
+VITE_API_URL=http://127.0.0.1:4000 bun run dev --port 5199
+bun run e2e:ui
+```
+
+It registers through the UI, so it covers the WASM key derivation, the recovery
+dialog, and the encrypt/decrypt round trip, and it fails on any console error —
+a React error otherwise hides behind the error boundary and a test would walk
+straight past a broken page.
+
 ## Reproducible web builds
 
 `./scripts/build-web-reproducible.sh` builds the web client so its output depends

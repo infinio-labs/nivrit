@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run src",
     "e2e": "playwright test",
-    "e2e:ui": "playwright test --ui"
+    "e2e:ui": "playwright test --config playwright-standalone.config.ts"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",
