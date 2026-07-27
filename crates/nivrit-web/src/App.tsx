@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { KeyRound, Loader2, Mail, Shield } from './components/icons';
+import { useCallback, useEffect, useState } from 'react';
+import { Loader2 } from './components/icons';
 import { initCrypto } from './crypto';
 import { SessionExpiredError, oauthAuthorizeUrl } from './api';
+import { navigate, parseRoute, replaceRoute, type DashboardTab } from './router';
 import {
   clearSession,
   createEnvironmentSession,
@@ -27,10 +28,8 @@ import {
   type SecretEntry,
   type Session,
 } from './session';
-import { Button, Card, Input, Label } from './components/ui';
 import { ToastContainer, type ToastMessage } from './components/Toast';
-import { AuthLayout } from './components/AuthLayout';
-import { AuthScreen } from './components/AuthScreen';
+import { AuthViews } from './components/AuthViews';
 import { RecoveryCodeModal } from './components/RecoveryCodeModal';
 import { ImportEnvModal } from './components/ImportEnvModal';
 import { Dashboard } from './components/Dashboard';
@@ -70,9 +69,51 @@ function App() {
   // WASM, which is measured in seconds, so without this a second click starts a
   // second derivation and can register twice or trip the login rate limiter.
   const [busy, setBusy] = useState<string>('');
-  const [view, setView] = useState<View>('auth');
+  // The URL is the source of truth for which view is showing, so every screen
+  // is linkable and the back button works. `setView` is kept as a thin wrapper
+  // so the many call sites below read unchanged.
+  const [route, setRoute] = useState(() => parseRoute(new URL(window.location.href)));
   const [session, setSession] = useState<Session | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // MFA is deliberately not a route: it is a transient step holding a
+  // short-lived token, which has no business in the address bar or in history.
+  const [mfaPending, setMfaPending] = useState(false);
+
+  const view: View = mfaPending
+    ? 'mfa'
+    : route.name === 'dashboard'
+      ? 'dashboard'
+      : route.name;
+  const activeTab: Tab = route.name === 'dashboard' ? route.tab : 'secrets';
+
+  const setView = useCallback((next: View) => {
+    setMfaPending(next === 'mfa');
+    switch (next) {
+      case 'dashboard':
+        navigate({ name: 'dashboard', tab: 'secrets' });
+        break;
+      case 'forgot':
+        navigate({ name: 'forgot' });
+        break;
+      case 'mfa':
+        // Stay where we are; the MFA form replaces the auth screen in place.
+        break;
+      default:
+        navigate({ name: 'auth' });
+    }
+  }, []);
+
+  const setActiveTab = useCallback((tab: Tab) => {
+    navigate({ name: 'dashboard', tab: tab as DashboardTab });
+  }, []);
+
+  // Back and forward move between views like any other site.
+  useEffect(() => {
+    const onPopState = () => setRoute(parseRoute(new URL(window.location.href)));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   // Auth form state
   const [isRegister, setIsRegister] = useState(false);
@@ -94,7 +135,7 @@ function App() {
   const [recoveryCodeInput, setRecoveryCodeInput] = useState('');
 
   // Dashboard state
-  const [activeTab, setActiveTab] = useState<Tab>('secrets');
+
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState('');
   const [projects, setProjects] = useState<Project[]>([]);
@@ -136,10 +177,8 @@ function App() {
   useEffect(() => {
     initCrypto()
       .then(() => {
-        localStorage.removeItem('nivrit_token');
         setLoading(false);
-        detectOAuthCallback();
-        detectResetToken();
+        consumeRouteParameters();
       })
       .catch((e) => {
         showToast(`failed to initialize crypto: ${e}`, 'error');
@@ -221,27 +260,27 @@ function App() {
     };
   }, [selectedProjectId, selectedEnvironmentId]);
 
-  function detectOAuthCallback() {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const provider = params.get('provider');
-    const state = params.get('state');
-    if (code && provider && state) {
-      setOauthProvider(provider);
-      setOauthCode(code);
-      setOauthState(state);
-      setView('oauth');
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }
-
-  function detectResetToken() {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
-    if (token) {
-      setResetToken(token);
-      setView('reset');
-      window.history.replaceState({}, document.title, window.location.pathname);
+  /**
+   * Lift one-time values out of the URL and then scrub them from it.
+   *
+   * An OAuth code and a reset token are single-use credentials. Leaving them in
+   * the address bar puts them in browser history and in the `Referer` of any
+   * outbound request, and lets the user navigate back onto a spent one.
+   * `replaceRoute` rewrites the entry without adding to the history stack, so
+   * back goes where it did before.
+   */
+  function consumeRouteParameters() {
+    const current = parseRoute(new URL(window.location.href));
+    if (current.name === 'oauth') {
+      setOauthProvider(current.provider);
+      setOauthCode(current.code);
+      setOauthState(current.state);
+      replaceRoute(current);
+      setRoute(current);
+    } else if (current.name === 'reset') {
+      setResetToken(current.token);
+      replaceRoute(current);
+      setRoute(current);
     }
   }
 
@@ -606,180 +645,30 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      {view === 'auth' && (
-        <AuthLayout>
-          <AuthScreen
-            isRegister={isRegister}
-            setIsRegister={setIsRegister}
-            email={email}
-            setEmail={setEmail}
-            password={password}
-            setPassword={setPassword}
-            name={name}
-            setName={setName}
-            onSubmit={handleAuth}
-            onOAuth={handleOAuth}
-            onForgot={() => setView('forgot')}
-            busy={busy}
-          />
-        </AuthLayout>
-      )}
-
-      {view === 'mfa' && (
-        <AuthLayout>
-          <Card className="w-full max-w-sm p-8 shadow-lg">
-            <div className="mb-6 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30">
-                <Shield size={24} />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                Two-factor authentication
-              </h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                Enter the code from your authenticator app.
-              </p>
-            </div>
-            <form onSubmit={handleMfa} className="space-y-4">
-              <div>
-                <Label htmlFor="totp-code">Authenticator code</Label>
-                <Input
-                  id="totp-code"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="000000"
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value)}
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={Boolean(busy)}>
-                {busy || 'Verify'}
-              </Button>
-            </form>
-          </Card>
-        </AuthLayout>
-      )}
-
-      {view === 'oauth' && (
-        <AuthLayout>
-          <Card className="w-full max-w-sm p-8 shadow-lg">
-            <div className="mb-6 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30">
-                <KeyRound size={24} />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                Unlock your vault
-              </h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                {isRegister
-                  ? 'Set a master password to encrypt your keys.'
-                  : 'Enter your master password to decrypt your keys.'}
-              </p>
-            </div>
-            <form onSubmit={handleOAuthComplete} className="space-y-4">
-              <div>
-                <Label htmlFor="oauth-password">Master password</Label>
-                <Input
-                  id="oauth-password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={8}
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={Boolean(busy)}>
-                {busy || 'Continue'}
-              </Button>
-            </form>
-          </Card>
-        </AuthLayout>
-      )}
-
-      {view === 'forgot' && (
-        <AuthLayout>
-          <Card className="w-full max-w-sm p-8 shadow-lg">
-            <div className="mb-6 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30">
-                <Mail size={24} />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Reset password</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                We will email you a reset link.
-              </p>
-            </div>
-            <form onSubmit={handleForgot} className="space-y-4">
-              <div>
-                <Label htmlFor="reset-email">Email</Label>
-                <Input
-                  id="reset-email"
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={Boolean(busy)}>
-                {busy || 'Send reset link'}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full"
-                onClick={() => setView('auth')}
-              >
-                Back to sign in
-              </Button>
-            </form>
-          </Card>
-        </AuthLayout>
-      )}
-
-      {view === 'reset' && (
-        <AuthLayout>
-          <Card className="w-full max-w-sm p-8 shadow-lg">
-            <div className="mb-6 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30">
-                <KeyRound size={24} />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">New password</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                Enter your recovery code and a new password.
-              </p>
-            </div>
-            <form onSubmit={handleReset} className="space-y-4">
-              <div>
-                <Label htmlFor="recovery-code">Recovery code</Label>
-                <Input
-                  id="recovery-code"
-                  type="text"
-                  placeholder="XXXX-XXXX-XXXX-XXXX"
-                  value={recoveryCodeInput}
-                  onChange={(e) => setRecoveryCodeInput(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="new-password">New password</Label>
-                <Input
-                  id="new-password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={8}
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={Boolean(busy)}>
-                {busy || 'Reset password'}
-              </Button>
-            </form>
-          </Card>
-        </AuthLayout>
+      {view !== 'dashboard' && (
+        <AuthViews
+          view={view}
+          isRegister={isRegister}
+          setIsRegister={setIsRegister}
+          email={email}
+          setEmail={setEmail}
+          password={password}
+          setPassword={setPassword}
+          name={name}
+          setName={setName}
+          busy={busy}
+          totpCode={totpCode}
+          setTotpCode={setTotpCode}
+          recoveryCodeInput={recoveryCodeInput}
+          setRecoveryCodeInput={setRecoveryCodeInput}
+          handleAuth={handleAuth}
+          handleMfa={handleMfa}
+          handleOAuth={handleOAuth}
+          handleOAuthComplete={handleOAuthComplete}
+          handleForgot={handleForgot}
+          handleReset={handleReset}
+          setView={setView}
+        />
       )}
 
       {view === 'dashboard' && session && (

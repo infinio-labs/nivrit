@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The web client had no routing at all: every view was React state, so nothing
+  was linkable, the back button did nothing, and a refresh always returned to
+  sign-in.
 - `niv login` was completely broken: `-p` was claimed by both `--password` and
   `--pat`, which clap rejects, so the command panicked on startup. It predates
   the auth work, and nothing caught it because no test constructed the parser.
@@ -75,6 +78,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Routing in the web client, over the History API in about eighty lines rather
+  than a router dependency. Dashboard tabs are now linkable, the back button
+  works, and OAuth and password-reset entry points are parsed rather than sniffed
+  out of query parameters. One-time credentials are scrubbed from the URL with
+  `replaceState`, so they stay out of history and out of `Referer`.
 - Reproducible web builds. `./scripts/build-web-reproducible.sh` remaps source
   paths so the output depends only on the commit rather than on who built it, and
   emits a `SHA256SUMS` manifest that releases publish. Release builds twice and

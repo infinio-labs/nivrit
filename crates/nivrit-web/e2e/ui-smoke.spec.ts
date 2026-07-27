@@ -87,6 +87,19 @@ test('register, store a secret, and read it back through the UI', async ({ page 
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
 
+  // --- routing --------------------------------------------------------------
+  // Views used to be React state only: nothing was linkable and back did
+  // nothing. Each tab should now have its own URL and sit in history.
+  await expect(page).toHaveURL(/\/app\/settings$/);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/app\/audit$/);
+  await expect(page.getByRole('heading', { name: 'Audit log', exact: true })).toBeVisible();
+
+  await page.goForward();
+  await expect(page).toHaveURL(/\/app\/settings$/);
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+
   // A React error would otherwise be invisible: the boundary renders a fallback
   // and the test would carry on past a broken page.
   expect(failures, `browser reported errors:\n${failures.join('\n')}`).toEqual([]);
