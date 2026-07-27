@@ -51,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `niv login` was completely broken: `-p` was claimed by both `--password` and
+  `--pat`, which clap rejects, so the command panicked on startup. It predates
+  the auth work, and nothing caught it because no test constructed the parser.
+  There is one now that validates the whole command tree.
+- `niv login` with a token plus `NIVRIT_PASSWORD` reported zero projects and
+  could not decrypt anything: the token path looked for a password supplied by
+  flag or stdin only, ignoring the environment.
+- Failing to find a project key now explains that the session was created
+  without a master password, instead of reporting "project key not found",
+  which reads as though the project is missing.
 - Key rotation is a single transaction and now rotates the recovery blob with
   the key pair. A partial rotation permanently locked a user out of their
   projects, and a stale recovery blob restored a pre-rotation key at reset time.
@@ -81,6 +91,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pagination on `list_secrets` and `list_secret_versions`.
 - Known-answer tests pinning credential derivation, plus verification that the
   WASM module and crypto-helper produce identical values.
+- `scripts/verify-web-protocol.mjs`, which exercises the browser's HTTP contract
+  against a running API — registration, login, and the two-step password reset —
+  and checks that a credential derived by the CLI helper is accepted for an
+  account created in the browser. Neither the Playwright suite nor
+  `test-stack.sh` covered that contract.
 
 ### Changed
 

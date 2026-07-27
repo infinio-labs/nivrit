@@ -66,7 +66,10 @@ enum Commands {
         password_stdin: bool,
         /// Authenticate with a personal access token instead of a password.
         /// Prefer NIVRIT_PAT over this flag, for the same reason.
-        #[arg(short, long)]
+        ///
+        /// No short form: `-p` belongs to --password, and clap rejects a
+        /// duplicate short name for the whole command.
+        #[arg(long)]
         pat: Option<String>,
     },
     /// Show the current user and session status
@@ -397,11 +400,20 @@ async fn main() -> anyhow::Result<()> {
 
             if let Some(pat) = pat {
                 // The password is optional here: without it the CLI holds an API
-                // session but cannot decrypt anything, which is useful for
-                // commands that only touch metadata.
-                let password = match (password, password_stdin) {
-                    (None, false) => None,
-                    (flag, stdin) => Some(resolve_password(flag, stdin, "Master password: ")?),
+                // session but cannot decrypt anything, which is still useful for
+                // commands that only touch metadata. So this does not prompt —
+                // it uses a password only if one was actually supplied, by any
+                // of the three means, including the environment.
+                let password_supplied =
+                    password.is_some() || password_stdin || std::env::var(PASSWORD_ENV).is_ok();
+                let password = if password_supplied {
+                    Some(resolve_password(
+                        password,
+                        password_stdin,
+                        "Master password: ",
+                    )?)
+                } else {
+                    None
                 };
                 login_with_pat(
                     &client,
@@ -2628,10 +2640,25 @@ async fn rotate_key(
 }
 
 fn load_project_key(config: &CliConfig, project_id: &str) -> anyhow::Result<[u8; 32]> {
-    let encrypted = config
-        .project_keys
-        .get(project_id)
-        .ok_or_else(|| anyhow::anyhow!("project key not found"))?;
+    let encrypted = config.project_keys.get(project_id).ok_or_else(|| {
+        // Almost always means the session was established with a token but no
+        // master password, so no project key could be unwrapped. Saying so beats
+        // "project key not found", which reads like the project is missing.
+        if config.private_key.is_none() {
+            anyhow::anyhow!(
+                concat!(
+                    "no decryption key for this project. ",
+                    "This session was created without a master password, so it can read ",
+                    "metadata but not secrets. Log in again with your password ",
+                    "(NIVRIT_PASSWORD, --password-stdin, or the interactive prompt)."
+                )
+            )
+        } else {
+            anyhow::anyhow!(
+                "no key for project {project_id}. You may not be a member of it, or you may need to log in again to pick up a newly granted membership."
+            )
+        }
+    })?;
     let ciphertext = STANDARD.decode(&encrypted.ciphertext)?;
     ciphertext
         .try_into()
@@ -2777,6 +2804,16 @@ mod tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    /// Validates the whole command tree: duplicate short flags, conflicting
+    /// argument names, malformed defaults. `niv login` previously panicked on
+    /// startup because `-p` was claimed by both --password and --pat, and
+    /// nothing caught it because no test constructed the parser.
+    #[test]
+    fn cli_definition_is_valid() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
     }
 
     /// The flag path must keep working for existing scripts, warning and all.

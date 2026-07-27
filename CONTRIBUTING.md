@@ -81,6 +81,21 @@ Use clear, descriptive commit messages. Prefer the present tense and explain the
 4. Update `CHANGELOG.md` under the `Unreleased` section if your change is user-facing.
 5. Open a pull request against `main` and fill out the PR template.
 
+## Verifying a change to authentication or crypto
+
+Unit tests do not prove the wire protocol works. Two suites cover it, and both
+need a running stack:
+
+- `./scripts/test-stack.sh` drives the CLI against Docker Compose.
+- `scripts/verify-web-protocol.mjs` drives the browser's HTTP contract using the
+  same WASM module the browser loads, and checks that a credential derived by
+  the CLI helper is accepted for an account created in the browser.
+
+That last check matters more than it looks. The browser and the CLI derive
+credentials independently; if they ever disagree, an account created in one
+silently cannot log in from the other, and no unit test in either language would
+notice.
+
 ## Architecture decisions
 
 Some of Nivrit's design choices look like omissions until you know why they were
