@@ -91,6 +91,10 @@ need a running stack:
   same WASM module the browser loads, and checks that a credential derived by
   the CLI helper is accepted for an account created in the browser.
 
+Both hit the registration and login rate limiters if run repeatedly from one
+address; `verify-web-protocol.mjs` detects that and says so rather than failing
+in a confusing place. Clear it with `DELETE FROM login_attempts;`.
+
 That last check matters more than it looks. The browser and the CLI derive
 credentials independently; if they ever disagree, an account created in one
 silently cannot log in from the other, and no unit test in either language would

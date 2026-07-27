@@ -57,7 +57,25 @@ const reg = await post('/auth/register', {
   private_key_recovery_nonce: material.private_key_recovery_nonce,
   private_key_recovery_algorithm: material.private_key_recovery_algorithm,
 });
+// Registration is rate-limited per source IP, so running this a few times in a
+// row locks the address out for the lockout window. That is the limiter working,
+// but without saying so every later check fails for an unrelated-looking reason.
+if (reg.status === 403) {
+  console.error(
+    'FAIL  browser register  <- 403 forbidden\n\n' +
+      'This is the registration rate limiter, not a protocol failure: repeated runs\n' +
+      'from one address trip it. Wait for the lockout to expire, or clear it with:\n\n' +
+      "  psql \"$DATABASE_URL\" -c \"DELETE FROM login_attempts;\"\n"
+  );
+  process.exit(1);
+}
 check('browser register', reg.status === 200, `${reg.status} ${JSON.stringify(reg.body)}`);
+// Everything below needs a real account; continuing without one produces a
+// cascade of failures that hide the actual cause.
+if (reg.status !== 200) {
+  console.error('\nAborting: registration failed, so the remaining checks cannot run.');
+  process.exit(1);
+}
 check('register does not return the recovery code', reg.body && !('recovery_code' in reg.body));
 
 // --- login ---
