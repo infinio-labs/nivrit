@@ -30,6 +30,9 @@ interface DashboardProps {
   environments: { id: string; project_id: string; name: string; slug: string }[];
   selectedEnvironmentId: string;
   setSelectedEnvironmentId: (id: string) => void;
+  folders: { id: string; name: string; path: string }[];
+  selectedFolderId: string;
+  setSelectedFolderId: (id: string) => void;
   onLogout: () => void;
   children: ReactNode;
 }
@@ -171,6 +174,18 @@ export function Dashboard(props: DashboardProps) {
                 placeholder="Select environment"
                 disabled={!props.selectedProjectId}
                 testId="env-select"
+              />
+              {/* Secrets are scoped to a folder. Without this the UI only ever
+                  queried the root, so anything filed into a folder from the CLI
+                  was invisible here. */}
+              <ContextSelect
+                label="Folder"
+                value={props.selectedFolderId}
+                onChange={props.setSelectedFolderId}
+                options={props.folders.map((f) => ({ value: f.id, label: f.name }))}
+                placeholder="Root folder"
+                disabled={!props.selectedEnvironmentId}
+                testId="folder-select"
               />
             </div>
 

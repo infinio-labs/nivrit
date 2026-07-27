@@ -25,6 +25,12 @@ import {
   listEnvironments,
   listOrgProjects,
   listSecrets,
+  listFolders,
+  createFolder,
+  deleteFolder,
+  listImports,
+  createImport,
+  deleteImport,
   login,
   loginTotp,
   oauthCallback,
@@ -47,7 +53,9 @@ import {
   type CreatedPat,
   type LoginResult,
   type OAuthCallbackResult,
+  type Folder,
   type PatMetadata,
+  type SecretImport,
   type SecretVersion,
 } from './api';
 import { assertAcceptablePassword } from './password-policy';
@@ -57,6 +65,12 @@ export interface SecretEntry {
   key: string;
   value: string;
   version: number;
+  /**
+   * Set when the secret came from an imported scope rather than this one.
+   * Inherited entries are shown but cannot be edited in place — writing the key
+   * here creates a local value that shadows the import.
+   */
+  inheritedFrom?: string;
 }
 
 export interface Session {
@@ -331,13 +345,24 @@ export async function setEncryptedSecret(
   projectId: string,
   environmentId: string,
   key: string,
-  value: string
+  value: string,
+  folderId: string | null = null
 ): Promise<void> {
   const s = getSessionOrThrow();
   const projectKey = s.projects.get(projectId);
   if (!projectKey) throw new Error('project key not available');
   const encrypted = await encryptValue(value, projectKey);
-  await setSecret(s.token, projectId, environmentId, key, encrypted.ciphertext, encrypted.nonce);
+  // The folder is part of a secret's identity here: writing without it would
+  // land in the environment root, where the folder view would not show it.
+  await setSecret(
+    s.token,
+    projectId,
+    environmentId,
+    key,
+    encrypted.ciphertext,
+    encrypted.nonce,
+    folderId
+  );
 }
 
 export async function getEncryptedSecret(
@@ -352,34 +377,97 @@ export async function getEncryptedSecret(
   return decryptValue(data.encrypted_value, data.nonce, projectKey);
 }
 
-export async function listEncryptedSecrets(
+async function decryptEntries(
   projectId: string,
-  environmentId: string
+  environmentId: string,
+  folderId: string | null,
+  inheritedFrom?: string
 ): Promise<SecretEntry[]> {
   const s = getSessionOrThrow();
   const projectKey = s.projects.get(projectId);
   if (!projectKey) throw new Error('project key not available');
-  const items = await listSecrets(s.token, projectId, environmentId);
+
+  const items = await listSecrets(s.token, projectId, environmentId, folderId);
   const entries: SecretEntry[] = [];
   for (const item of items) {
     try {
       const value = await decryptValue(item.encrypted_value, item.nonce, projectKey);
-      entries.push({ id: item.id, key: item.key, value, version: item.version });
+      entries.push({ id: item.id, key: item.key, value, version: item.version, inheritedFrom });
     } catch (e) {
       console.warn(`failed to decrypt secret ${item.key}:`, e);
-      entries.push({ id: item.id, key: item.key, value: '[decryption failed]', version: item.version });
+      entries.push({
+        id: item.id,
+        key: item.key,
+        value: '[decryption failed]',
+        version: item.version,
+        inheritedFrom,
+      });
     }
   }
   return entries;
 }
 
+/**
+ * Every secret visible in a scope, including those inherited through imports.
+ *
+ * Mirrors the CLI's `resolve_env_map`: imported scopes are merged first, then
+ * local secrets, so a local value shadows an inherited one of the same key.
+ * The merge happens here because the server only stores the import *link* — it
+ * never sees a value, so it cannot resolve inheritance itself.
+ *
+ * Like the CLI, this follows one level of imports. An imported environment that
+ * itself imports another does not chain.
+ */
+export async function listEncryptedSecrets(
+  projectId: string,
+  environmentId: string,
+  folderId: string | null = null,
+  environmentNames: Map<string, string> = new Map()
+): Promise<SecretEntry[]> {
+  const s = getSessionOrThrow();
+
+  const byKey = new Map<string, SecretEntry>();
+
+  // Imports first: lowest precedence.
+  let imports: SecretImport[] = [];
+  try {
+    imports = await listImports(s.token, projectId, environmentId, folderId);
+  } catch (e) {
+    // An unreachable import list should not hide the local secrets.
+    console.warn('failed to list imports:', e);
+  }
+
+  for (const imp of imports) {
+    try {
+      const label = environmentNames.get(imp.source_environment_id) ?? 'another environment';
+      const inherited = await decryptEntries(
+        projectId,
+        imp.source_environment_id,
+        imp.source_folder_id,
+        label
+      );
+      for (const entry of inherited) byKey.set(entry.key, entry);
+    } catch (e) {
+      console.warn(`failed to resolve import ${imp.id}:`, e);
+    }
+  }
+
+  // Local last, so it overrides.
+  for (const entry of await decryptEntries(projectId, environmentId, folderId)) {
+    byKey.set(entry.key, entry);
+  }
+
+  return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
+}
+
 export async function deleteEncryptedSecret(
   projectId: string,
   environmentId: string,
-  key: string
+  key: string,
+  folderId: string | null = null
 ): Promise<void> {
   const s = getSessionOrThrow();
-  await deleteSecret(s.token, projectId, environmentId, key);
+  await deleteSecret(s.token, projectId, environmentId, key, folderId);
 }
 
 export async function getProjectEnvironments(projectId: string) {
@@ -481,4 +569,58 @@ export async function verifyAuditLogSession(
   logId: string
 ): Promise<{ valid: boolean; reason: string | null }> {
   return verifyAuditLog(getSessionOrThrow().token, projectId, logId);
+}
+
+
+// Folders
+
+export async function listFoldersSession(
+  projectId: string,
+  environmentId: string
+): Promise<Folder[]> {
+  return listFolders(getSessionOrThrow().token, projectId, environmentId);
+}
+
+export async function createFolderSession(
+  projectId: string,
+  environmentId: string,
+  name: string
+): Promise<Folder> {
+  // The API takes a name and a path separately; a flat single-level path keeps
+  // the two consistent without inventing a nesting UI nobody asked for.
+  const trimmed = name.trim();
+  return createFolder(getSessionOrThrow().token, projectId, environmentId, trimmed, `/${trimmed}`);
+}
+
+export async function deleteFolderSession(projectId: string, folderId: string): Promise<void> {
+  return deleteFolder(getSessionOrThrow().token, projectId, folderId);
+}
+
+// Imports
+
+export async function listImportsSession(
+  projectId: string,
+  environmentId: string,
+  folderId: string | null = null
+): Promise<SecretImport[]> {
+  return listImports(getSessionOrThrow().token, projectId, environmentId, folderId);
+}
+
+export async function createImportSession(
+  projectId: string,
+  environmentId: string,
+  sourceEnvironmentId: string,
+  folderId: string | null = null
+): Promise<SecretImport> {
+  return createImport(
+    getSessionOrThrow().token,
+    projectId,
+    environmentId,
+    sourceEnvironmentId,
+    folderId
+  );
+}
+
+export async function deleteImportSession(projectId: string, importId: string): Promise<void> {
+  return deleteImport(getSessionOrThrow().token, projectId, importId);
 }

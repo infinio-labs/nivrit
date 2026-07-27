@@ -378,7 +378,8 @@ export async function setSecret(
   environmentId: string,
   key: string,
   ciphertext: string,
-  nonce: string
+  nonce: string,
+  folderId?: string | null
 ): Promise<void> {
   const res = await fetch(`${API_URL}/projects/${projectId}/secrets`, {
     method: 'POST',
@@ -386,7 +387,13 @@ export async function setSecret(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ environment_id: environmentId, key, encrypted_value: ciphertext, nonce }),
+    body: JSON.stringify({
+      environment_id: environmentId,
+      folder_id: folderId ?? null,
+      key,
+      encrypted_value: ciphertext,
+      nonce,
+    }),
   });
   if (!res.ok) throw await failure(res, 'set secret failed');
 }
@@ -417,13 +424,23 @@ export interface SecretListItem {
   version: number;
 }
 
+/**
+ * List secrets in one scope.
+ *
+ * `folderId` matters: the server matches `folder_id IS NOT DISTINCT FROM`, so
+ * omitting it returns only root-level secrets. Leaving it out is why secrets
+ * filed into folders used to be invisible here.
+ */
 export async function listSecrets(
   token: string,
   projectId: string,
-  environmentId: string
+  environmentId: string,
+  folderId?: string | null
 ): Promise<SecretListItem[]> {
+  const query = new URLSearchParams({ environment_id: environmentId });
+  if (folderId) query.set('folder_id', folderId);
   const res = await fetch(
-    `${API_URL}/projects/${projectId}/secrets?environment_id=${environmentId}`,
+    `${API_URL}/projects/${projectId}/secrets?${query}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!res.ok) throw await failure(res, 'list secrets failed');
@@ -434,10 +451,13 @@ export async function deleteSecret(
   token: string,
   projectId: string,
   environmentId: string,
-  key: string
+  key: string,
+  folderId?: string | null
 ): Promise<void> {
+  const query = new URLSearchParams({ environment_id: environmentId });
+  if (folderId) query.set('folder_id', folderId);
   const res = await fetch(
-    `${API_URL}/projects/${projectId}/secrets/${encodeURIComponent(key)}?environment_id=${environmentId}`,
+    `${API_URL}/projects/${projectId}/secrets/${encodeURIComponent(key)}?${query}`,
     {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
@@ -622,4 +642,126 @@ export async function verifyAuditLog(
   );
   if (!res.ok) throw await failure(res, 'could not verify that entry');
   return res.json();
+}
+
+
+// Folders
+//
+// Organisational metadata only. Names and paths are stored in plaintext, like
+// environment names — there is nothing secret about "database" as a folder name,
+// and the values inside stay end-to-end encrypted regardless.
+
+export interface Folder {
+  id: string;
+  project_id: string;
+  environment_id: string;
+  name: string;
+  path: string;
+}
+
+export async function listFolders(
+  token: string,
+  projectId: string,
+  environmentId: string
+): Promise<Folder[]> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/folders?environment_id=${environmentId}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw await failure(res, 'could not load folders');
+  return res.json();
+}
+
+export async function createFolder(
+  token: string,
+  projectId: string,
+  environmentId: string,
+  name: string,
+  path: string
+): Promise<Folder> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/folders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ environment_id: environmentId, name, path }),
+  });
+  if (!res.ok) throw await failure(res, 'could not create the folder');
+  return res.json();
+}
+
+export async function deleteFolder(
+  token: string,
+  projectId: string,
+  folderId: string
+): Promise<void> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/folders/${folderId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await failure(res, 'could not delete the folder');
+}
+
+// Imports
+//
+// A link saying "this scope also pulls in that one". The server stores only the
+// link; the client fetches both scopes and merges them locally, so inheritance
+// costs the server no visibility into any value.
+
+export interface SecretImport {
+  id: string;
+  project_id: string;
+  environment_id: string;
+  folder_id: string | null;
+  source_environment_id: string;
+  source_folder_id: string | null;
+  position: number;
+}
+
+export async function listImports(
+  token: string,
+  projectId: string,
+  environmentId: string,
+  folderId?: string | null
+): Promise<SecretImport[]> {
+  const query = new URLSearchParams({ environment_id: environmentId });
+  if (folderId) query.set('folder_id', folderId);
+  const res = await fetch(`${API_URL}/projects/${projectId}/imports?${query}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await failure(res, 'could not load imports');
+  return res.json();
+}
+
+export async function createImport(
+  token: string,
+  projectId: string,
+  environmentId: string,
+  sourceEnvironmentId: string,
+  folderId?: string | null,
+  sourceFolderId?: string | null
+): Promise<SecretImport> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/imports`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      environment_id: environmentId,
+      folder_id: folderId ?? null,
+      source_environment_id: sourceEnvironmentId,
+      source_folder_id: sourceFolderId ?? null,
+      position: 0,
+    }),
+  });
+  if (!res.ok) throw await failure(res, 'could not create the import');
+  return res.json();
+}
+
+export async function deleteImport(
+  token: string,
+  projectId: string,
+  importId: string
+): Promise<void> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/imports/${importId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await failure(res, 'could not delete the import');
 }

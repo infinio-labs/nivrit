@@ -20,6 +20,7 @@ import {
   EmptyState,
   Input,
   Label,
+  Select,
 } from './ui';
 import type { SecretEntry } from '../session';
 
@@ -82,6 +83,18 @@ interface SecretsTabProps {
   setNewEnvSlug: (v: string) => void;
   onCreateEnvironment: (e: React.FormEvent) => void;
   hasProjectKey: boolean;
+  folders: { id: string; name: string; path: string }[];
+  selectedFolderId: string;
+  setSelectedFolderId: (id: string) => void;
+  newFolderName: string;
+  setNewFolderName: (v: string) => void;
+  onCreateFolder: (e: React.FormEvent) => void;
+  onDeleteFolder: (folderId: string) => void;
+  imports: { id: string; source_environment_id: string }[];
+  importSourceEnvId: string;
+  setImportSourceEnvId: (v: string) => void;
+  onCreateImport: (e: React.FormEvent) => void;
+  onDeleteImport: (importId: string) => void;
 }
 
 export function SecretsTab(props: SecretsTabProps) {
@@ -182,6 +195,96 @@ export function SecretsTab(props: SecretsTabProps) {
               You may need to be invited to this project before you can view or edit secrets.
             </p>
           </div>
+        </div>
+      )}
+
+      {props.selectedProjectId && props.selectedEnvironmentId && props.hasProjectKey && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <CreateCard
+            title="Folders"
+            description="Group secrets within an environment. Pick one from the Folder selector above."
+          >
+            <form onSubmit={props.onCreateFolder} className="flex gap-2">
+              <Input
+                data-testid="folder-name-input"
+                placeholder="database"
+                value={props.newFolderName}
+                onChange={(e) => props.setNewFolderName(e.target.value)}
+              />
+              <Button type="submit" data-testid="create-folder-btn">
+                Add
+              </Button>
+            </form>
+            {props.folders.length > 0 && (
+              <ul className="mt-3 space-y-1">
+                {props.folders.map((f) => (
+                  <li key={f.id} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="truncate text-slate-700 dark:text-slate-300">{f.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => props.onDeleteFolder(f.id)}
+                      aria-label={`Delete folder ${f.name}`}
+                      className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CreateCard>
+
+          <CreateCard
+            title="Inherit from another environment"
+            description="Secrets from the source appear here unless a local value of the same name overrides them."
+          >
+            <form onSubmit={props.onCreateImport} className="flex gap-2">
+              <Select
+                data-testid="import-source-select"
+                value={props.importSourceEnvId}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                  props.setImportSourceEnvId(e.target.value)
+                }
+                aria-label="Source environment"
+              >
+                <option value="">Select environment</option>
+                {props.environments
+                  .filter((e) => e.id !== props.selectedEnvironmentId)
+                  .map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name || e.slug}
+                    </option>
+                  ))}
+              </Select>
+              <Button type="submit" data-testid="create-import-btn">
+                Add
+              </Button>
+            </form>
+            {props.imports.length > 0 && (
+              <ul className="mt-3 space-y-1">
+                {props.imports.map((imp) => {
+                  const source = props.environments.find(
+                    (e) => e.id === imp.source_environment_id
+                  );
+                  return (
+                    <li key={imp.id} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="truncate text-slate-700 dark:text-slate-300">
+                        {source?.name || source?.slug || imp.source_environment_id}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => props.onDeleteImport(imp.id)}
+                        aria-label="Remove import"
+                        className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CreateCard>
         </div>
       )}
 
@@ -360,7 +463,18 @@ function SecretRow({
 
   return (
     <tr className="bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800/50">
-      <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{secret.key}</td>
+      <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">
+        <div className="flex items-center gap-2">
+          <span>{secret.key}</span>
+          {secret.inheritedFrom && (
+            <Badge variant="default">
+              <span title={`Inherited from ${secret.inheritedFrom}. Saving a value with this name here will override it.`}>
+                from {secret.inheritedFrom}
+              </span>
+            </Badge>
+          )}
+        </div>
+      </td>
       <td className="px-4 py-3 font-mono text-slate-600 dark:text-slate-300">
         {revealed ? secret.value : '•'.repeat(Math.min(secret.value.length, 12))}
       </td>
@@ -379,16 +493,18 @@ function SecretRow({
           >
             <Pencil size={16} />
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => onViewHistory(secret.key)}
-            title="History"
-            aria-label="Version history"
-          >
-            <Clock size={16} />
-          </Button>
+          {!secret.inheritedFrom && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => onViewHistory(secret.key)}
+              title="History"
+              aria-label="Version history"
+            >
+              <Clock size={16} />
+            </Button>
+          )}
           <Button
             type="button"
             variant="ghost"
@@ -409,17 +525,19 @@ function SecretRow({
           >
             <Copy size={16} />
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => onDelete(secret.key)}
-            title="Delete"
-            aria-label="Delete"
-            className="text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
-          >
-            <Trash2 size={16} />
-          </Button>
+          {!secret.inheritedFrom && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => onDelete(secret.key)}
+              title="Delete"
+              aria-label="Delete"
+              className="text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+            >
+              <Trash2 size={16} />
+            </Button>
+          )}
         </div>
       </td>
     </tr>

@@ -73,6 +73,52 @@ test('register, store a secret, and read it back through the UI', async ({ page 
   await page.getByRole('button', { name: 'Show' }).first().click();
   await expect(page.getByText('sk-live-ui-smoke')).toBeVisible();
 
+  // --- folders --------------------------------------------------------------
+  // A secret filed into a folder used to be invisible here: the UI never sent
+  // folder_id, and the server matches it exactly, so only root secrets came back.
+  await page.getByTestId('folder-name-input').fill('database');
+  await page.getByTestId('create-folder-btn').click();
+  await page.getByTestId('folder-select').selectOption({ label: 'database' });
+
+  // The root secret must not leak into the folder view.
+  await expect(page.getByText('API_KEY')).toHaveCount(0);
+
+  await page.getByTestId('secret-key-input').fill('DB_PASSWORD');
+  await page.getByTestId('secret-value-input').fill('pg-in-folder');
+  await page.getByTestId('set-secret-btn').click();
+  await expect(page.getByText('DB_PASSWORD')).toBeVisible({ timeout: 15_000 });
+
+  // Back to the root: the folder's secret must not appear there either.
+  await page.getByTestId('folder-select').selectOption({ value: '' });
+  await expect(page.getByText('API_KEY')).toBeVisible();
+  await expect(page.getByText('DB_PASSWORD')).toHaveCount(0);
+
+  // --- inheritance ----------------------------------------------------------
+  // A second environment that imports the first should show the first's
+  // secrets, marked as inherited, without duplicating them.
+  await page.getByTestId('env-name-input').fill('Staging');
+  await page.getByTestId('env-slug-input').fill(`staging-${UNIQUE}`);
+  await page.getByTestId('create-env-btn').click();
+  await page.getByTestId('env-select').selectOption({ label: 'Staging' });
+
+  await expect(page.getByText('API_KEY')).toHaveCount(0);
+
+  await page.getByTestId('import-source-select').selectOption({ label: 'Prod' });
+  await page.getByTestId('create-import-btn').click();
+
+  await expect(page.getByText('API_KEY')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('from Prod').first()).toBeVisible();
+
+  // A local value of the same name must win over the inherited one.
+  await page.getByTestId('secret-key-input').fill('API_KEY');
+  await page.getByTestId('secret-value-input').fill('sk-staging-override');
+  await page.getByTestId('set-secret-btn').click();
+  await expect(page.getByText('from Prod')).toHaveCount(0, { timeout: 15_000 });
+  await page.getByRole('button', { name: 'Show' }).first().click();
+  await expect(page.getByText('sk-staging-override')).toBeVisible();
+
+  await page.getByTestId('env-select').selectOption({ label: 'Prod' });
+
   // --- the tabs added alongside this work must at least render ------------
   await page.getByRole('button', { name: 'Access tokens' }).click();
   await expect(

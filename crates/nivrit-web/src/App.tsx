@@ -13,6 +13,12 @@ import {
   forgotPasswordSession,
   getMyOrgsSession,
   getProjectEnvironments,
+  listFoldersSession,
+  createFolderSession,
+  deleteFolderSession,
+  listImportsSession,
+  createImportSession,
+  deleteImportSession,
   getSession,
   inviteProjectMember,
   listEncryptedSecrets,
@@ -142,8 +148,16 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
+  const [folders, setFolders] = useState<{ id: string; name: string; path: string }[]>([]);
+  // Empty string means the environment root, matching ContextSelect's placeholder.
+  const [selectedFolderId, setSelectedFolderId] = useState('');
+  const [imports, setImports] = useState<{ id: string; source_environment_id: string }[]>([]);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [importSourceEnvId, setImportSourceEnvId] = useState('');
   const [secrets, setSecrets] = useState<SecretEntry[]>([]);
   const [listing, setListing] = useState(false);
+  // Labels inherited secrets with the environment they came from.
+  const environmentNames = new Map(environments.map((e) => [e.id, e.name || e.slug]));
   const [secretKey, setSecretKey] = useState('');
   const [secretValue, setSecretValue] = useState('');
   const [editingSecretKey, setEditingSecretKey] = useState('');
@@ -242,13 +256,51 @@ function App() {
   }, [selectedProjectId]);
 
   useEffect(() => {
+    setSelectedFolderId('');
+    if (!selectedProjectId || !selectedEnvironmentId) {
+      setFolders([]);
+      return;
+    }
+    let cancelled = false;
+    listFoldersSession(selectedProjectId, selectedEnvironmentId)
+      .then((items) => {
+        if (!cancelled) setFolders(items);
+      })
+      .catch(() => setFolders([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId, selectedEnvironmentId]);
+
+  useEffect(() => {
+    if (!selectedProjectId || !selectedEnvironmentId) {
+      setImports([]);
+      return;
+    }
+    let cancelled = false;
+    listImportsSession(selectedProjectId, selectedEnvironmentId, selectedFolderId || null)
+      .then((items) => {
+        if (!cancelled) setImports(items);
+      })
+      .catch(() => setImports([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId, selectedEnvironmentId, selectedFolderId]);
+
+  useEffect(() => {
     if (!selectedProjectId || !selectedEnvironmentId) {
       setSecrets([]);
       return;
     }
     let cancelled = false;
     setListing(true);
-    listEncryptedSecrets(selectedProjectId, selectedEnvironmentId)
+    listEncryptedSecrets(
+      selectedProjectId,
+      selectedEnvironmentId,
+      selectedFolderId || null,
+      environmentNames
+    )
       .then((items) => {
         if (cancelled) return;
         setSecrets(items);
@@ -258,7 +310,8 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedProjectId, selectedEnvironmentId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId, selectedEnvironmentId, selectedFolderId, imports]);
 
   /**
    * Lift one-time values out of the URL and then scrub them from it.
@@ -428,7 +481,14 @@ function App() {
     if (!selectedProjectId || !selectedEnvironmentId) return;
     setListing(true);
     try {
-      const items = await listEncryptedSecrets(selectedProjectId, selectedEnvironmentId);
+      // Must carry the selected folder, or saving inside a folder reloads the
+      // root and the secret that was just written appears to have vanished.
+      const items = await listEncryptedSecrets(
+        selectedProjectId,
+        selectedEnvironmentId,
+        selectedFolderId || null,
+        environmentNames
+      );
       setSecrets(items);
     } catch (e) {
       console.warn('failed to refresh secrets', e);
@@ -437,10 +497,72 @@ function App() {
     }
   }
 
+  async function reloadFolders() {
+    setFolders(await listFoldersSession(selectedProjectId, selectedEnvironmentId));
+  }
+
+  async function reloadImports() {
+    setImports(
+      await listImportsSession(selectedProjectId, selectedEnvironmentId, selectedFolderId || null)
+    );
+  }
+
+  async function handleCreateFolder(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newFolderName.trim()) return;
+    await withBusy('Creating folder…', async () => {
+      await createFolderSession(selectedProjectId, selectedEnvironmentId, newFolderName);
+      setNewFolderName('');
+      await reloadFolders();
+      showToast('folder created', 'success');
+    });
+  }
+
+  async function handleDeleteFolder(folderId: string) {
+    const folder = folders.find((f) => f.id === folderId);
+    if (!window.confirm(`Delete folder "${folder?.name ?? folderId}"?`)) return;
+    await withBusy('Deleting folder…', async () => {
+      await deleteFolderSession(selectedProjectId, folderId);
+      if (selectedFolderId === folderId) setSelectedFolderId('');
+      await reloadFolders();
+      showToast('folder deleted', 'success');
+    });
+  }
+
+  async function handleCreateImport(e: React.FormEvent) {
+    e.preventDefault();
+    if (!importSourceEnvId) return;
+    await withBusy('Linking environment…', async () => {
+      await createImportSession(
+        selectedProjectId,
+        selectedEnvironmentId,
+        importSourceEnvId,
+        selectedFolderId || null
+      );
+      setImportSourceEnvId('');
+      await reloadImports();
+      showToast('environment linked', 'success');
+    });
+  }
+
+  async function handleDeleteImport(importId: string) {
+    await withBusy('Removing link…', async () => {
+      await deleteImportSession(selectedProjectId, importId);
+      await reloadImports();
+      showToast('link removed', 'success');
+    });
+  }
+
   async function handleSetSecret(e: React.FormEvent) {
     e.preventDefault();
     await withBusy('Encrypting…', async () => {
-      await setEncryptedSecret(selectedProjectId, selectedEnvironmentId, secretKey, secretValue);
+      await setEncryptedSecret(
+        selectedProjectId,
+        selectedEnvironmentId,
+        secretKey,
+        secretValue,
+        selectedFolderId || null
+      );
       setSecretKey('');
       setSecretValue('');
       setEditingSecretKey('');
@@ -504,7 +626,13 @@ function App() {
     try {
       for (const { key, value } of entries) {
         try {
-          await setEncryptedSecret(selectedProjectId, selectedEnvironmentId, key, value);
+          await setEncryptedSecret(
+            selectedProjectId,
+            selectedEnvironmentId,
+            key,
+            value,
+            selectedFolderId || null
+          );
           imported++;
         } catch {
           failed++;
@@ -529,7 +657,12 @@ function App() {
   async function handleDeleteSecret(key: string) {
     if (!confirm(`Delete secret "${key}"?`)) return;
     try {
-      await deleteEncryptedSecret(selectedProjectId, selectedEnvironmentId, key);
+      await deleteEncryptedSecret(
+        selectedProjectId,
+        selectedEnvironmentId,
+        key,
+        selectedFolderId || null
+      );
       await refreshSecrets();
       showToast('secret deleted', 'success');
     } catch {
@@ -685,6 +818,9 @@ function App() {
           environments={environments}
           selectedEnvironmentId={selectedEnvironmentId}
           setSelectedEnvironmentId={setSelectedEnvironmentId}
+          folders={folders}
+          selectedFolderId={selectedFolderId}
+          setSelectedFolderId={setSelectedFolderId}
           onLogout={handleLogout}
         >
           {activeTab === 'secrets' && (
@@ -727,6 +863,18 @@ function App() {
               setNewEnvSlug={setNewEnvSlug}
               onCreateEnvironment={handleCreateEnvironment}
               hasProjectKey={hasProjectKey}
+              folders={folders}
+              selectedFolderId={selectedFolderId}
+              setSelectedFolderId={setSelectedFolderId}
+              newFolderName={newFolderName}
+              setNewFolderName={setNewFolderName}
+              onCreateFolder={handleCreateFolder}
+              onDeleteFolder={handleDeleteFolder}
+              imports={imports}
+              importSourceEnvId={importSourceEnvId}
+              setImportSourceEnvId={setImportSourceEnvId}
+              onCreateImport={handleCreateImport}
+              onDeleteImport={handleDeleteImport}
             />
           )}
           {activeTab === 'members' && (

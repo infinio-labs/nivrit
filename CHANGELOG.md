@@ -51,6 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Secrets filed into a folder were invisible in the web UI.** The server
+  matches `folder_id` exactly and the web client never sent one, so it only ever
+  queried the environment root. Anyone who organised secrets into folders from
+  the CLI saw them disappear from the browser with nothing to explain it. There
+  is now a folder selector, and writes and deletes carry the folder too, so
+  saving inside a folder no longer lands in the root.
+- **Secrets inherited through environment imports were invisible in the web UI.**
+  The server stores the import link but does not resolve it; the CLI merges the
+  scopes client-side and the browser had no equivalent. Inherited secrets now
+  appear, labelled with their source, with local values overriding them — the
+  same precedence the CLI uses.
 - The web client had no routing at all: every view was React state, so nothing
   was linkable, the back button did nothing, and a refresh always returned to
   sign-in.
@@ -89,6 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails if the results differ. This is what lets someone check that a deployment
   is serving the code in this repository — the "malicious frontend deployment"
   threat cannot be prevented from inside the app, only made detectable.
+- Folder and environment-import management in the web UI, including creating and
+  removing both.
 - Audit log in the web UI, with per-entry ML-DSA-65 signature verification. The
   signed audit trail was a headline feature no user could see. Non-admins get an
   explanation rather than an error, since the API restricts it by design.
