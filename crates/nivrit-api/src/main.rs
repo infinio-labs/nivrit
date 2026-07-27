@@ -86,8 +86,9 @@ async fn main() -> anyhow::Result<()> {
             "/metrics",
             get(move || std::future::ready(metric_handle.render())),
         )
-        .route("/register", post(handlers::auth::register))
-        .route("/login", post(handlers::auth::login))
+        // Auth lives under /auth/*. There were once bare /register and /login
+        // aliases as well; they were removed before 1.0 rather than supported
+        // forever, since every other auth route was already namespaced.
         .route("/auth/register", post(handlers::auth::register))
         .route("/auth/login", post(handlers::auth::login))
         .route("/auth/login/totp", post(handlers::auth::login_totp))

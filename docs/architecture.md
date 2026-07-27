@@ -129,9 +129,27 @@ which is what lets an account created in the browser log in from the CLI.
 ### Not protected against
 
 - A compromised client device: if an attacker has the user's password and config, they can decrypt.
-- A malicious frontend deployment: the browser loads JS from the server, so a compromised server could serve code that exfiltrates keys. Mitigations: CSP, SRI, code signing, and
-  eventually self-hosting. **Self-hosting is the strongest mitigation** — you control the
-  code the browser runs.
+- A malicious frontend deployment. The browser fetches its own trust anchor from
+  the server on every load, so a compromised server can serve code that
+  exfiltrates keys. Nothing inside the application can prevent this.
+
+  What we do instead is make the honest build *checkable*. Releases publish a
+  `SHA256SUMS` manifest for the web bundle, and the build is reproducible: source
+  paths are remapped so the output depends only on the commit, not on who built
+  it. Anyone can check out the tag, run
+  `./scripts/build-web-reproducible.sh --verify <manifest>`, and compare against
+  the files a deployment actually serves. A mismatch is evidence.
+
+  Note the limits honestly. This is detection, not prevention, and only for
+  someone who performs the check. **Self-hosting remains the strongest answer**,
+  and the CLI and VS Code extension sidestep the problem entirely because they
+  are installed artifacts rather than code refetched on every page load. For
+  high-value secrets, prefer them over the browser.
+
+  Subresource Integrity is deliberately not used: it protects a trusted HTML
+  document from a compromised subresource host, but Nivrit serves `index.html`
+  and its assets from the same origin, so anyone able to alter one can alter the
+  other and update the integrity attribute to match.
 - Lost passwords *and* a lost recovery code: with neither, encrypted data is
   unrecoverable by design. Nobody, including the operator, can restore it.
 - A malicious client build. The guarantees rest on the client running the code

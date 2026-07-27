@@ -75,6 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reproducible web builds. `./scripts/build-web-reproducible.sh` remaps source
+  paths so the output depends only on the commit rather than on who built it, and
+  emits a `SHA256SUMS` manifest that releases publish. Release builds twice and
+  fails if the results differ. This is what lets someone check that a deployment
+  is serving the code in this repository — the "malicious frontend deployment"
+  threat cannot be prevented from inside the app, only made detectable.
 - Access token management in the web UI. An account created in the browser
   previously had no way to obtain a credential for the CLI, the SDKs, or the VS
   Code extension.
@@ -122,6 +128,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   download. It is generated client-side and unrecoverable once dismissed.
 - The web client sets a description, favicon, theme colour, `noindex`, and a
   `noscript` explanation.
+- **Breaking:** the bare `/register` and `/login` routes are gone; use
+  `/auth/register` and `/auth/login`. Every other auth route was already
+  namespaced, and supporting two spellings forever is worse than removing one
+  before 1.0.
 - The API container runs as an unprivileged user.
 - Release builds use `codegen-units = 1` and strip symbols for smaller binaries.
 

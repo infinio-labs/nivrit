@@ -96,6 +96,17 @@ credentials independently; if they ever disagree, an account created in one
 silently cannot log in from the other, and no unit test in either language would
 notice.
 
+## Reproducible web builds
+
+`./scripts/build-web-reproducible.sh` builds the web client so its output depends
+only on the source, and writes a `SHA256SUMS` manifest. Release runs it twice and
+fails if the two builds differ.
+
+If you add a build-time dependency that embeds a timestamp, an absolute path, or
+a random seed, that check will start failing. Please fix the source of the
+nondeterminism rather than dropping the check — the published checksums are what
+lets a user confirm a deployment is serving the code in this repository.
+
 ## Architecture decisions
 
 Some of Nivrit's design choices look like omissions until you know why they were

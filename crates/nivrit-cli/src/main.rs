@@ -888,7 +888,7 @@ async fn register(
     });
 
     let res: serde_json::Value = client
-        .post(format!("{}/register", server))
+        .post(format!("{}/auth/register", server))
         .json(&req)
         .send()
         .await?
@@ -949,7 +949,7 @@ async fn login(
     });
 
     let res: serde_json::Value = client
-        .post(format!("{}/login", server))
+        .post(format!("{}/auth/login", server))
         .json(&req)
         .send()
         .await?
