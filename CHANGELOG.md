@@ -41,13 +41,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rotating source addresses gave unlimited guesses against one account.
 - Key material (ML-KEM seeds, derived keys, unwrapped private keys) is zeroized
   on drop.
-- The CLI config, which holds the plaintext private key and every project key,
-  is written `0600` in a `0700` directory instead of world-readable `0644`.
-  Existing files are tightened on the next save.
+- The CLI config is written `0600` in a `0700` directory instead of
+  world-readable `0644`. Existing files are tightened on the next save.
+- The CLI no longer caches project keys in plaintext on disk. It previously
+  wrote a "plaintext escrow": the decrypted DEK for every project the user had
+  touched, sitting next to a config file readable by anything running as that
+  user. Project keys are now wrapped under a per-device key before being
+  cached, and the never-actually-read plaintext copy of the private key was
+  removed entirely.
 - Replacing an existing TOTP secret now requires re-authentication; a stolen
   session token was previously enough to swap in a new authenticator.
+- TOTP login, verification, and disable are rate-limited per user; they were
+  previously unlimited, so a stolen session token or password let an attacker
+  brute-force the 6-digit code.
+- `POST /auth/forgot-password` is rate-limited per IP and per email; it was
+  previously unlimited, making it a fast path to enumerate accounts and to
+  spam the email queue.
+- Creating a project now requires the `Member` role in the parent org, not
+  just membership. An org `Viewer` could previously create a project and
+  become its admin, escalating their effective privilege.
+- Password reset now rotates the recovery code along with the private key.
+  Previously the old recovery code kept unlocking the account after a reset,
+  which defeats the point of resetting after a suspected compromise.
+- `GET /users/public-key` now requires the caller to hold `Member`+ in the
+  project the lookup is for (a new required `project_id` parameter), instead
+  of resolving any email for any authenticated user. It exists to support
+  inviting someone to a project; it was a free email-enumeration oracle over
+  the whole user table.
+- Access-log write failures are now logged instead of silently discarded
+  (`let _ = insert_access_log(..)`); a signing or DB error on the audit path
+  previously vanished with no trace that an access went unrecorded.
 - `X-Forwarded-For` is honoured for rate limiting when `NIVRIT_TRUSTED_PROXY` is
   set, so deployments behind the bundled nginx no longer share one bucket.
+- Argon2id now runs in a Web Worker instead of on the main thread. Login,
+  registration, and password reset each spend tens to hundreds of ms in
+  Argon2id; on the main thread that froze the tab for the duration with no
+  way for the browser to paint the "working" state in between.
 
 ### Fixed
 
@@ -147,9 +176,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - API client errors now carry the server's message instead of a fixed string, and
   a 401 raises `SessionExpiredError` so the UI signs the user out rather than
   showing a generic failure.
-- Auth forms show progress and refuse double submission. Each one runs Argon2id
-  in WASM on the main thread, so the page froze for seconds with no feedback and
-  a second click started a second derivation.
+- Auth forms show progress and refuse double submission, since Argon2id takes
+  long enough that a second click could otherwise start a second derivation
+  before the first returned.
 - The recovery code dialog requires an explicit acknowledgement and offers a
   download. It is generated client-side and unrecoverable once dismissed.
 - The web client sets a description, favicon, theme colour, `noindex`, and a

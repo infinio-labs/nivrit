@@ -33,6 +33,11 @@ differently:
   still cannot decrypt anything.
 - **Post-quantum today.** Key exchange uses a hybrid **X25519 + ML-KEM-768** scheme and
   audit-log signatures use **ML-DSA-65**. This is built into the core, not a roadmap item.
+  The hybrid construction means a flaw in ML-KEM alone can't undo the classical X25519
+  guarantee. One caveat worth knowing: the underlying `ml-kem`/`ml-dsa` crates are
+  correct-to-spec RustCrypto implementations, but are pre-1.0 and not yet FIPS-validated
+  or independently audited — true of PQC in pure Rust generally today, not specific to
+  this project, but worth knowing before relying on it for a high-stakes deployment.
 - **AGPL-3.0.** The license keeps hosted/modified versions open, so the zero-knowledge
   claim stays auditable end to end.
 - **Self-host first.** One `docker compose up` runs the whole stack; there is no
