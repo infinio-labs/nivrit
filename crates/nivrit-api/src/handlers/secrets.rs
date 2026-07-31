@@ -21,6 +21,19 @@ use chrono::{DateTime, SubsecRound, Utc};
 
 type ApiResult<T> = std::result::Result<T, ApiError>;
 
+/// Page size when a caller does not ask for one.
+const DEFAULT_PAGE_LIMIT: i64 = 100;
+/// Server-enforced ceiling. A caller asking for more gets this instead, so one
+/// request can never pull an unbounded result set into memory.
+const MAX_PAGE_LIMIT: i64 = 1000;
+
+/// Clamp caller-supplied paging into a range the server is willing to serve.
+fn page(limit: Option<i64>, offset: Option<i64>) -> (i64, i64) {
+    let limit = limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, MAX_PAGE_LIMIT);
+    let offset = offset.unwrap_or(0).max(0);
+    (limit, offset)
+}
+
 fn default_algorithm() -> String {
     "aes256gcm-v1".into()
 }
@@ -35,11 +48,81 @@ fn build_signed_audit_log(
     key: &str,
     created_at: DateTime<Utc>,
 ) -> Option<SignedAuditLog> {
-    state.signature_service.as_ref().and_then(|svc| {
-        let msg =
-            AuditLogMessage::new(project_id, environment_id, user_id, action, key, created_at);
-        svc.sign_audit_log(&msg).ok()
-    })
+    let msg = AuditLogMessage::new(project_id, environment_id, user_id, action, key, created_at);
+    match state
+        .signature_service
+        .as_ref()
+        .map(|svc| svc.sign_audit_log(&msg))
+    {
+        Some(Ok(signed)) => Some(signed),
+        Some(Err(e)) => {
+            // The signed audit trail is only tamper-evident if every entry is
+            // actually signed. Recording unsigned and moving on turns a broken
+            // signing key into a silent, permanent gap in that trail instead of
+            // an alert someone can act on.
+            tracing::error!(
+                project_id = %project_id, action, key, error = %e,
+                "failed to sign audit log entry; recording it unsigned"
+            );
+            None
+        }
+        None => None,
+    }
+}
+
+/// Sign and record one access-log entry, logging (not silently dropping) any
+/// failure to do so.
+///
+/// This is best-effort by design, not by accident: failing the secret
+/// read/write itself because the audit table hiccuped would turn an
+/// observability problem into an availability one. But "best-effort" and
+/// "silent" are different things - a signed audit trail that can lose entries
+/// without anyone noticing isn't one you can rely on for anything.
+#[allow(clippy::too_many_arguments)]
+async fn record_access(
+    state: &AppState,
+    project_id: Uuid,
+    environment_id: Option<Uuid>,
+    secret_id: Option<Uuid>,
+    user_id: Uuid,
+    action: &str,
+    key: &str,
+    ip: &str,
+    user_agent: Option<&str>,
+    created_at: DateTime<Utc>,
+) {
+    let signed = build_signed_audit_log(
+        state,
+        project_id,
+        environment_id,
+        user_id,
+        action,
+        key,
+        created_at,
+    );
+
+    if let Err(e) = queries::insert_access_log(
+        &state.db,
+        project_id,
+        environment_id,
+        secret_id,
+        user_id,
+        action,
+        key,
+        Some(ip),
+        user_agent,
+        created_at,
+        signed.as_ref().map(|s| s.algorithm.as_str()),
+        signed.as_ref().map(|s| s.signature.as_slice()),
+        signed.as_ref().map(|s| s.public_key.as_slice()),
+    )
+    .await
+    {
+        tracing::error!(
+            project_id = %project_id, action, key, error = %e,
+            "failed to record audit log entry; this access was not logged"
+        );
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,30 +185,17 @@ pub async fn create_secret(
 
     let user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok());
     let created_at = Utc::now().trunc_subsecs(6);
-    let signed = build_signed_audit_log(
+    record_access(
         &state,
-        project_id,
-        Some(req.environment_id),
-        user.id,
-        "write",
-        &req.key,
-        created_at,
-    );
-
-    let _ = queries::insert_access_log(
-        &state.db,
         project_id,
         Some(req.environment_id),
         Some(row.id),
         user.id,
         "write",
         &req.key,
-        Some(&addr.ip().to_string()),
+        &addr.ip().to_string(),
         user_agent,
         created_at,
-        signed.as_ref().map(|s| s.algorithm.as_str()),
-        signed.as_ref().map(|s| s.signature.as_slice()),
-        signed.as_ref().map(|s| s.public_key.as_slice()),
     )
     .await;
 
@@ -146,12 +216,16 @@ pub async fn create_secret(
 pub struct GetSecretQuery {
     pub environment_id: Uuid,
     pub folder_id: Option<Uuid>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ListSecretsQuery {
     pub environment_id: Option<Uuid>,
     pub folder_id: Option<Uuid>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 pub async fn list_secrets(
@@ -164,35 +238,30 @@ pub async fn list_secrets(
 ) -> ApiResult<Json<Vec<SecretResponse>>> {
     require_project_member(&state.db, project_id, user.id).await?;
 
-    let rows =
-        queries::list_secrets(&state.db, project_id, query.environment_id, query.folder_id).await?;
+    let (limit, offset) = page(query.limit, query.offset);
+    let rows = queries::list_secrets(
+        &state.db,
+        project_id,
+        query.environment_id,
+        query.folder_id,
+        limit,
+        offset,
+    )
+    .await?;
 
     let user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok());
     let created_at = Utc::now().trunc_subsecs(6);
-    let signed = build_signed_audit_log(
+    record_access(
         &state,
-        project_id,
-        query.environment_id,
-        user.id,
-        "read",
-        "*",
-        created_at,
-    );
-
-    let _ = queries::insert_access_log(
-        &state.db,
         project_id,
         query.environment_id,
         None,
         user.id,
         "read",
         "*",
-        Some(&addr.ip().to_string()),
+        &addr.ip().to_string(),
         user_agent,
         created_at,
-        signed.as_ref().map(|s| s.algorithm.as_str()),
-        signed.as_ref().map(|s| s.signature.as_slice()),
-        signed.as_ref().map(|s| s.public_key.as_slice()),
     )
     .await;
 
@@ -237,30 +306,17 @@ pub async fn delete_secret(
     // secret row has already been removed.
     let user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok());
     let created_at = Utc::now().trunc_subsecs(6);
-    let signed = build_signed_audit_log(
+    record_access(
         &state,
-        project_id,
-        Some(query.environment_id),
-        user.id,
-        "delete",
-        &key,
-        created_at,
-    );
-
-    let _ = queries::insert_access_log(
-        &state.db,
         project_id,
         Some(query.environment_id),
         None,
         user.id,
         "delete",
         &key,
-        Some(&addr.ip().to_string()),
+        &addr.ip().to_string(),
         user_agent,
         created_at,
-        signed.as_ref().map(|s| s.algorithm.as_str()),
-        signed.as_ref().map(|s| s.signature.as_slice()),
-        signed.as_ref().map(|s| s.public_key.as_slice()),
     )
     .await;
 
@@ -295,7 +351,8 @@ pub async fn list_secret_versions(
     )
     .await?;
 
-    let versions = queries::list_secret_versions(&state.db, secret.id).await?;
+    let (limit, offset) = page(query.limit, query.offset);
+    let versions = queries::list_secret_versions(&state.db, secret.id, limit, offset).await?;
 
     Ok(Json(
         versions
@@ -343,30 +400,17 @@ pub async fn restore_secret(
 
     let user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok());
     let created_at = Utc::now().trunc_subsecs(6);
-    let signed = build_signed_audit_log(
+    record_access(
         &state,
-        project_id,
-        Some(req.environment_id),
-        user.id,
-        "write",
-        &key,
-        created_at,
-    );
-
-    let _ = queries::insert_access_log(
-        &state.db,
         project_id,
         Some(req.environment_id),
         Some(row.id),
         user.id,
         "write",
         &key,
-        Some(&addr.ip().to_string()),
+        &addr.ip().to_string(),
         user_agent,
         created_at,
-        signed.as_ref().map(|s| s.algorithm.as_str()),
-        signed.as_ref().map(|s| s.signature.as_slice()),
-        signed.as_ref().map(|s| s.public_key.as_slice()),
     )
     .await;
 
@@ -404,30 +448,17 @@ pub async fn get_secret(
 
     let user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok());
     let created_at = Utc::now().trunc_subsecs(6);
-    let signed = build_signed_audit_log(
+    record_access(
         &state,
-        project_id,
-        Some(query.environment_id),
-        user.id,
-        "read",
-        &key,
-        created_at,
-    );
-
-    let _ = queries::insert_access_log(
-        &state.db,
         project_id,
         Some(query.environment_id),
         Some(row.id),
         user.id,
         "read",
         &key,
-        Some(&addr.ip().to_string()),
+        &addr.ip().to_string(),
         user_agent,
         created_at,
-        signed.as_ref().map(|s| s.algorithm.as_str()),
-        signed.as_ref().map(|s| s.signature.as_slice()),
-        signed.as_ref().map(|s| s.public_key.as_slice()),
     )
     .await;
 

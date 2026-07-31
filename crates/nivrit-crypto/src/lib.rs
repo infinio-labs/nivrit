@@ -4,6 +4,8 @@ pub mod hybrid;
 pub mod kek;
 pub mod keys;
 pub mod password;
+pub mod password_policy;
+pub mod recovery;
 pub mod signatures;
 pub mod suite;
 
@@ -12,4 +14,6 @@ pub use envelope::*;
 pub use hybrid::*;
 pub use keys::*;
 pub use password::*;
+pub use password_policy::*;
+pub use recovery::*;
 pub use suite::*;

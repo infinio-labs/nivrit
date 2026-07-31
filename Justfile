@@ -47,3 +47,20 @@ install-web:
 # Run the web UI dev server
 dev-web:
     cd crates/nivrit-web && bun run dev
+
+# Verify the browser's wire protocol against a running API.
+#
+# Needs an API started with NIVRIT_EMAIL_MODE=log at info level, and the WASM
+# node build plus the release crypto-helper:
+#   just build-wasm && cargo build --release -p nivrit-crypto-helper
+verify-protocol api="http://127.0.0.1:4000" log="target/api-e2e.log":
+    NIVRIT_API={{api}} NIVRIT_API_LOG={{log}} node scripts/verify-web-protocol.mjs
+
+# Build the WASM crypto module for the browser and for node (tests/scripts)
+build-wasm:
+    cd crates/nivrit-web-crypto && wasm-pack build --target bundler --out-dir ../nivrit-web/src/wasm/pkg
+    cd crates/nivrit-web-crypto && wasm-pack build --target nodejs --out-dir ../nivrit-web/src/wasm/pkg-node
+
+# Full-stack feature test against Docker Compose
+test-stack:
+    ./scripts/test-stack.sh

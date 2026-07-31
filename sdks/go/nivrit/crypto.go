@@ -76,15 +76,24 @@ func (c *HelperCrypto) GenerateKeypair(password string) (map[string]string, erro
 	return result, err
 }
 
+// GenerateRegistrationMaterial returns everything registration needs, computed
+// locally: keypair, recovery material, and the auth_hash the server accepts
+// in place of the password.
+func (c *HelperCrypto) GenerateRegistrationMaterial(password, email string) (map[string]string, error) {
+	var result map[string]string
+	err := c.call(map[string]any{"op": "generate_registration_material", "password": password, "email": email}, &result)
+	return result, err
+}
+
 func (c *HelperCrypto) DecryptPrivateKey(encryptedPrivateKey, nonce, password string) (string, error) {
 	var result struct {
 		PrivateKey string `json:"private_key"`
 	}
 	err := c.call(map[string]any{
-		"op":                     "decrypt_private_key",
+		"op":                    "decrypt_private_key",
 		"encrypted_private_key": encryptedPrivateKey,
-		"nonce":                  nonce,
-		"password":               password,
+		"nonce":                 nonce,
+		"password":              password,
 	}, &result)
 	return result.PrivateKey, err
 }
@@ -112,7 +121,7 @@ func (c *HelperCrypto) DecryptValue(ciphertext, nonce, key string) (string, erro
 		Plaintext string `json:"plaintext"`
 	}
 	err := c.call(map[string]any{
-		"op":          "decrypt_value",
+		"op":         "decrypt_value",
 		"ciphertext": ciphertext,
 		"nonce":      nonce,
 		"key":        key,
@@ -123,8 +132,8 @@ func (c *HelperCrypto) DecryptValue(ciphertext, nonce, key string) (string, erro
 func (c *HelperCrypto) EncapsulateProjectKey(projectKey, recipientPublicKey string) (map[string]any, error) {
 	var result map[string]any
 	err := c.call(map[string]any{
-		"op":                     "encapsulate_project_key",
-		"project_key":            projectKey,
+		"op":                   "encapsulate_project_key",
+		"project_key":          projectKey,
 		"recipient_public_key": recipientPublicKey,
 	}, &result)
 	return result, err

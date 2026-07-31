@@ -387,6 +387,58 @@ pub fn generate_user_keypair(password: &str) -> Result<(String, String, String)>
     ))
 }
 
+/// Everything registration needs, computed locally: keypair, recovery
+/// material, and the auth_hash the server accepts in place of the password.
+pub struct RegistrationMaterial {
+    pub public_key: String,
+    pub encrypted_private_key: String,
+    pub private_key_nonce: String,
+    pub auth_hash: String,
+    pub recovery_code: String,
+    pub recovery_auth_hash: String,
+    pub encrypted_private_key_recovery: String,
+    pub private_key_recovery_nonce: String,
+}
+
+pub fn generate_registration_material(password: &str, email: &str) -> Result<RegistrationMaterial> {
+    let keypair = HybridUserKeyPair::generate();
+    let plaintext_private = keypair.serialize_private_key();
+
+    let salt = nivrit_crypto::random_bytes::<16>();
+    let derived = derive_key(password.as_bytes(), &salt);
+    let encrypted = crypto_encrypt_value(&plaintext_private, &derived)
+        .map_err(|e| NivritError::Crypto(e.to_string()))?;
+    let mut combined = salt.to_vec();
+    combined.extend_from_slice(&encrypted.ciphertext);
+
+    let recovery_code = nivrit_crypto::recovery::generate_recovery_code();
+    let recovery_key = nivrit_crypto::recovery::derive_recovery_key(&recovery_code, email);
+    let (recovery_ciphertext, recovery_nonce) =
+        nivrit_crypto::recovery::encrypt_private_key_for_recovery(
+            &plaintext_private,
+            &recovery_key,
+        )
+        .map_err(|e| NivritError::Crypto(e.to_string()))?;
+    let recovery_auth_hash = b64_encode(&*nivrit_crypto::derive_recovery_auth_hash(
+        &recovery_code,
+        email,
+    ));
+
+    Ok(RegistrationMaterial {
+        public_key: b64_encode(&keypair.serialize_public_key()),
+        encrypted_private_key: b64_encode(&combined),
+        private_key_nonce: b64_encode(&encrypted.nonce),
+        auth_hash: b64_encode(&*nivrit_crypto::derive_auth_hash(
+            password.as_bytes(),
+            email,
+        )),
+        recovery_code,
+        recovery_auth_hash,
+        encrypted_private_key_recovery: b64_encode(&recovery_ciphertext),
+        private_key_recovery_nonce: b64_encode(&recovery_nonce),
+    })
+}
+
 pub fn decrypt_private_key(
     encrypted_private_key_b64: &str,
     nonce_b64: &str,
@@ -416,6 +468,7 @@ pub fn decapsulate_project_key(
     let encapsulated: EncapsulatedProjectKey = serde_json::from_slice(&json_bytes)?;
     let private_key = b64_decode(private_key_b64)?;
     decapsulate_project_key_hybrid(&encapsulated, &private_key)
+        .map(|key| *key)
         .map_err(|e| NivritError::Crypto(e.to_string()))
 }
 

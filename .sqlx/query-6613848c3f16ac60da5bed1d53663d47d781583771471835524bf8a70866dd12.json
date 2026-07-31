@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE users\n        SET public_key = $1,\n            encrypted_private_key = $2,\n            private_key_nonce = $3,\n            private_key_algorithm = $4,\n            encrypted_private_key_recovery = $5,\n            private_key_recovery_nonce = $6,\n            private_key_recovery_algorithm = $7,\n            recovery_code_hash = $8,\n            updated_at = NOW()\n        WHERE id = $9\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Bytea",
+        "Text",
+        "Bytea",
+        "Bytea",
+        "Text",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6613848c3f16ac60da5bed1d53663d47d781583771471835524bf8a70866dd12"
+}

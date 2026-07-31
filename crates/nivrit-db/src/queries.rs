@@ -242,6 +242,15 @@ pub async fn get_user_by_email(pool: &DbPool, email: &str) -> Result<UserRow> {
     .map_err(|_| NivritError::Unauthorized)
 }
 
+/// Reset a user's password, private-key wrapping, *and* recovery credential in
+/// one statement.
+///
+/// The recovery blob wraps the same private key the password does, so leaving
+/// it behind a reset would mean the old recovery code - which may already be
+/// compromised, since needing a reset at all is often a sign of that - stays
+/// valid forever after. Rotating it here is the reset-password analog of what
+/// `rotate_user_keys` already does for key rotation.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_user_password_and_keys(
     pool: &DbPool,
     user_id: Uuid,
@@ -249,6 +258,10 @@ pub async fn update_user_password_and_keys(
     encrypted_private_key: &[u8],
     private_key_nonce: &[u8],
     private_key_algorithm: &str,
+    recovery_code_hash: &str,
+    encrypted_private_key_recovery: &[u8],
+    private_key_recovery_nonce: &[u8],
+    private_key_recovery_algorithm: &str,
 ) -> Result<()> {
     sqlx::query!(
         r#"
@@ -257,13 +270,21 @@ pub async fn update_user_password_and_keys(
             encrypted_private_key = $2,
             private_key_nonce = $3,
             private_key_algorithm = $4,
+            recovery_code_hash = $5,
+            encrypted_private_key_recovery = $6,
+            private_key_recovery_nonce = $7,
+            private_key_recovery_algorithm = $8,
             updated_at = NOW()
-        WHERE id = $5
+        WHERE id = $9
         "#,
         password_hash,
         encrypted_private_key,
         private_key_nonce,
         private_key_algorithm,
+        recovery_code_hash,
+        encrypted_private_key_recovery,
+        private_key_recovery_nonce,
+        private_key_recovery_algorithm,
         user_id
     )
     .execute(pool.inner())
@@ -507,11 +528,18 @@ pub async fn get_secret(
     .map_err(|_| NivritError::NotFound("secret".into()))
 }
 
+/// List secrets in a project, newest page first.
+///
+/// Paginated because a project's secret count is unbounded in practice and an
+/// unpaginated `fetch_all` allocates the whole set server-side before writing a
+/// single byte of response.
 pub async fn list_secrets(
     pool: &DbPool,
     project_id: Uuid,
     environment_id: Option<Uuid>,
     folder_id: Option<Uuid>,
+    limit: i64,
+    offset: i64,
 ) -> Result<Vec<SecretRow>> {
     sqlx::query_as!(
         SecretRow,
@@ -522,10 +550,13 @@ pub async fn list_secrets(
           AND ($2::uuid IS NULL OR environment_id = $2)
           AND folder_id IS NOT DISTINCT FROM $3
         ORDER BY key ASC
+        LIMIT $4 OFFSET $5
         "#,
         project_id,
         environment_id,
-        folder_id
+        folder_id,
+        limit,
+        offset
     )
     .fetch_all(pool.inner())
     .await
@@ -794,7 +825,14 @@ pub async fn list_secret_tags(pool: &DbPool, secret_id: Uuid) -> Result<Vec<TagR
     .map_err(map_db_error)
 }
 
-pub async fn list_secret_versions(pool: &DbPool, secret_id: Uuid) -> Result<Vec<SecretVersionRow>> {
+/// Version history for one secret. Paginated: history grows without bound as a
+/// secret is rotated.
+pub async fn list_secret_versions(
+    pool: &DbPool,
+    secret_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<SecretVersionRow>> {
     sqlx::query_as!(
         SecretVersionRow,
         r#"
@@ -802,8 +840,11 @@ pub async fn list_secret_versions(pool: &DbPool, secret_id: Uuid) -> Result<Vec<
         FROM secret_versions
         WHERE secret_id = $1
         ORDER BY version DESC
+        LIMIT $2 OFFSET $3
         "#,
-        secret_id
+        secret_id,
+        limit,
+        offset
     )
     .fetch_all(pool.inner())
     .await
@@ -1090,14 +1131,52 @@ pub async fn get_access_log(pool: &DbPool, project_id: Uuid, log_id: Uuid) -> Re
     .map_err(|_| NivritError::NotFound("access log".into()))
 }
 
-pub async fn update_user_keys(
+/// One project key, re-wrapped to the user's new public key.
+pub struct RotatedProjectKey<'a> {
+    pub project_id: Uuid,
+    pub encrypted_project_key: &'a [u8],
+    pub project_key_nonce: &'a [u8],
+    pub project_key_algorithm: &'a str,
+}
+
+/// The user's new key material, both password-wrapped and recovery-wrapped.
+pub struct UserKeyRotation<'a> {
+    pub public_key: &'a [u8],
+    pub encrypted_private_key: &'a [u8],
+    pub private_key_nonce: &'a [u8],
+    pub private_key_algorithm: &'a str,
+    pub encrypted_private_key_recovery: &'a [u8],
+    pub private_key_recovery_nonce: &'a [u8],
+    pub private_key_recovery_algorithm: &'a str,
+    /// Hash of the freshly issued recovery credential. Rotation mints a new
+    /// recovery code, because the old one wraps a private key that no longer
+    /// exists.
+    pub recovery_code_hash: &'a str,
+}
+
+/// Replace a user's key pair and every key wrapped to it, atomically.
+///
+/// This must be a single transaction. Rotation invalidates the old private key,
+/// so a partial application - new key pair stored, some project keys still
+/// wrapped to the old one - permanently locks the user out of those projects,
+/// with no way back because the old key is gone from client and server alike.
+///
+/// The recovery blob is rotated in the same statement. It wraps the *private
+/// key*, so leaving it behind would mean a later password reset restores the
+/// pre-rotation key and silently loses access to everything rotated since.
+///
+/// Membership is enforced by the `UPDATE ... WHERE user_id` itself: a project
+/// the caller does not belong to matches no row, and the mismatched count fails
+/// the whole transaction. No role check - re-wrapping a key you already hold is
+/// not a privileged action, and viewers hold project keys too.
+pub async fn rotate_user_keys(
     pool: &DbPool,
     user_id: Uuid,
-    public_key: &[u8],
-    encrypted_private_key: &[u8],
-    private_key_nonce: &[u8],
-    private_key_algorithm: &str,
+    keys: &UserKeyRotation<'_>,
+    project_keys: &[RotatedProjectKey<'_>],
 ) -> Result<()> {
+    let mut tx = pool.inner().begin().await.map_err(map_db_error)?;
+
     sqlx::query!(
         r#"
         UPDATE users
@@ -1105,18 +1184,52 @@ pub async fn update_user_keys(
             encrypted_private_key = $2,
             private_key_nonce = $3,
             private_key_algorithm = $4,
+            encrypted_private_key_recovery = $5,
+            private_key_recovery_nonce = $6,
+            private_key_recovery_algorithm = $7,
+            recovery_code_hash = $8,
             updated_at = NOW()
-        WHERE id = $5
+        WHERE id = $9
         "#,
-        public_key,
-        encrypted_private_key,
-        private_key_nonce,
-        private_key_algorithm,
+        keys.public_key,
+        keys.encrypted_private_key,
+        keys.private_key_nonce,
+        keys.private_key_algorithm,
+        keys.encrypted_private_key_recovery,
+        keys.private_key_recovery_nonce,
+        keys.private_key_recovery_algorithm,
+        keys.recovery_code_hash,
         user_id
     )
-    .execute(pool.inner())
+    .execute(&mut *tx)
     .await
     .map_err(map_db_error)?;
+
+    for key in project_keys {
+        let result = sqlx::query!(
+            r#"
+            UPDATE project_memberships
+            SET encrypted_project_key = $1,
+                project_key_nonce = $2,
+                project_key_algorithm = $3
+            WHERE project_id = $4 AND user_id = $5
+            "#,
+            key.encrypted_project_key,
+            key.project_key_nonce,
+            key.project_key_algorithm,
+            key.project_id,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        if result.rows_affected() != 1 {
+            return Err(NivritError::Forbidden);
+        }
+    }
+
+    tx.commit().await.map_err(map_db_error)?;
     Ok(())
 }
 
@@ -1465,12 +1578,19 @@ pub async fn get_user_by_token_hash(
     Ok((pat, user))
 }
 
+/// Record that a token was used, at most once a minute.
+///
+/// Every PAT-authenticated request would otherwise write the same row, making a
+/// busy token a contention hotspot and generating dead tuples for autovacuum to
+/// chase. The timestamp is only ever read by humans checking when a token was
+/// last active, so minute resolution loses nothing.
 pub async fn touch_personal_access_token(pool: &DbPool, token_id: Uuid) -> Result<()> {
     sqlx::query!(
         r#"
         UPDATE personal_access_tokens
         SET last_used_at = NOW()
         WHERE id = $1
+          AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
         "#,
         token_id
     )

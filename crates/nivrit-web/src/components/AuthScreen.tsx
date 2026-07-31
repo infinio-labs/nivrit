@@ -1,4 +1,5 @@
 import { Button, Card, Input, Label } from './ui';
+import { assessPassword } from '../password-policy';
 
 export function AuthScreen({
   isRegister,
@@ -12,6 +13,7 @@ export function AuthScreen({
   onSubmit,
   onOAuth,
   onForgot,
+  busy,
 }: {
   isRegister: boolean;
   setIsRegister: (v: boolean) => void;
@@ -24,7 +26,12 @@ export function AuthScreen({
   onSubmit: (e: React.FormEvent) => void;
   onOAuth: (p: 'google' | 'github') => void;
   onForgot: () => void;
+  /** Non-empty while an auth request is in flight; also the label to show. */
+  busy: string;
 }) {
+  // Only assessed while registering: on sign-in the password is whatever the
+  // account already has, and grading it there would be noise.
+  const assessment = isRegister && password ? assessPassword(password, email) : null;
   return (
     <Card className="w-full max-w-md p-6 shadow-lg sm:p-8">
       <div className="mb-8 text-center">
@@ -88,8 +95,45 @@ export function AuthScreen({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            minLength={8}
+            aria-describedby={assessment ? 'password-feedback' : undefined}
           />
+          {assessment && (
+            <div id="password-feedback" aria-live="polite" className="mt-2">
+              <div className="flex gap-1" aria-hidden="true">
+                {(['weak', 'fair', 'strong'] as const).map((level, i) => {
+                  const reached =
+                    (assessment.strength === 'strong' && i <= 2) ||
+                    (assessment.strength === 'fair' && i <= 1) ||
+                    (assessment.strength === 'weak' && i === 0);
+                  const colour =
+                    assessment.strength === 'strong'
+                      ? 'bg-green-500'
+                      : assessment.strength === 'fair'
+                        ? 'bg-amber-500'
+                        : 'bg-red-500';
+                  return (
+                    <span
+                      key={level}
+                      className={`h-1 flex-1 rounded-full ${
+                        reached ? colour : 'bg-slate-200 dark:bg-slate-700'
+                      }`}
+                    />
+                  );
+                })}
+              </div>
+              {assessment.message && (
+                <p
+                  className={`mt-1.5 text-xs ${
+                    assessment.acceptable
+                      ? 'text-slate-500 dark:text-slate-400'
+                      : 'text-red-600 dark:text-red-400'
+                  }`}
+                >
+                  {assessment.message}
+                </p>
+              )}
+            </div>
+          )}
         </div>
         {isRegister && (
           <div>
@@ -104,9 +148,20 @@ export function AuthScreen({
             />
           </div>
         )}
-        <Button type="submit" data-testid="auth-submit" className="w-full">
-          {isRegister ? 'Create account' : 'Sign in'}
+        <Button
+          type="submit"
+          data-testid="auth-submit"
+          className="w-full"
+          disabled={Boolean(busy) || (isRegister && !!password && !assessment?.acceptable)}
+        >
+          {busy || (isRegister ? 'Create account' : 'Sign in')}
         </Button>
+        {busy && isRegister && (
+          <p className="text-center text-xs text-slate-500 dark:text-slate-400">
+            Deriving your keys in this browser. This is deliberately slow — it is what makes your
+            password expensive to attack.
+          </p>
+        )}
       </form>
 
       {!isRegister && (
@@ -130,11 +185,21 @@ export function AuthScreen({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Button type="button" variant="secondary" onClick={() => onOAuth('google')}>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={Boolean(busy)}
+          onClick={() => onOAuth('google')}
+        >
           <GoogleIcon />
           Google
         </Button>
-        <Button type="button" variant="secondary" onClick={() => onOAuth('github')}>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={Boolean(busy)}
+          onClick={() => onOAuth('github')}
+        >
           <GitHubIcon />
           GitHub
         </Button>

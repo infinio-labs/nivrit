@@ -18,8 +18,8 @@ API_BASE="http://localhost:4000"
 
 ALICE_HOME="/tmp/nivrit-e2e-alice"
 BOB_HOME="/tmp/nivrit-e2e-bob"
-ALICE_PASSWORD="AliceSecret123!"
-BOB_PASSWORD="BobSecret123!"
+ALICE_PASSWORD="alice-glacier-tuesday-vault"
+BOB_PASSWORD="bob-harbour-lantern-vault"
 
 # Use unique identifiers so the script can be re-run against the same database.
 SUFFIX="$(date +%s)"
@@ -37,10 +37,15 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # Run the Nivrit CLI inside the API container with a custom HOME so each user
 # gets an isolated config file.
+# Runs the CLI inside the api container.
+#
+# The master password goes in via NIVRIT_PASSWORD rather than --password: the
+# flag still works but warns, because a secret in argv lands in shell history
+# and is visible in `ps`. Callers set NIV_PASSWORD before invoking.
 run_cli() {
   local home_dir="$1"
   shift
-  ${COMPOSE} exec -T -e "HOME=${home_dir}" api nivrit "$@"
+  ${COMPOSE} exec -T -e "HOME=${home_dir}" -e "NIVRIT_PASSWORD=${NIV_PASSWORD:-}" api nivrit "$@"
 }
 
 # Read a value from a CLI config JSON by key.
@@ -92,7 +97,7 @@ ${COMPOSE} exec -T api rm -rf "${ALICE_HOME}" "${BOB_HOME}"
 # Core secret lifecycle
 # -----------------------------------------------------------------------------
 info "registering Alice"
-run_cli "${ALICE_HOME}" register --email "${ALICE_EMAIL}" --password "${ALICE_PASSWORD}" --name Alice
+NIV_PASSWORD="${ALICE_PASSWORD}" run_cli "${ALICE_HOME}" register --email "${ALICE_EMAIL}" --name Alice
 
 info "creating organization"
 ORG_OUT="$(run_cli "${ALICE_HOME}" create-org --name "${ORG_NAME}" --slug "${ORG_SLUG}")"
@@ -148,14 +153,14 @@ done
 # Member invitation (hybrid project-key sharing)
 # -----------------------------------------------------------------------------
 info "registering Bob"
-run_cli "${BOB_HOME}" register --email "${BOB_EMAIL}" --password "${BOB_PASSWORD}" --name Bob
+NIV_PASSWORD="${BOB_PASSWORD}" run_cli "${BOB_HOME}" register --email "${BOB_EMAIL}" --name Bob
 
 info "Alice invites Bob as member"
 INVITE_OUT="$(run_cli "${ALICE_HOME}" invite --project-id "${PROJ_ID}" --email "${BOB_EMAIL}" --role member)"
 echo "${INVITE_OUT}" | grep -q "invited" || fail "invitation failed: ${INVITE_OUT}"
 
 info "Bob logs in and reads the shared project"
-run_cli "${BOB_HOME}" login --email "${BOB_EMAIL}" --password "${BOB_PASSWORD}"
+NIV_PASSWORD="${BOB_PASSWORD}" run_cli "${BOB_HOME}" login --email "${BOB_EMAIL}"
 
 # Re-create a secret after the invitation so Bob's project key is populated.
 info "Alice sets a secret after inviting Bob"
@@ -169,7 +174,7 @@ BOB_GET="$(run_cli "${BOB_HOME}" get --project-id "${PROJ_ID}" --environment-id 
 # Key rotation
 # -----------------------------------------------------------------------------
 info "Alice rotates her hybrid key pair"
-ROTATE_OUT="$(run_cli "${ALICE_HOME}" rotate-key --password "${ALICE_PASSWORD}")"
+ROTATE_OUT="$(NIV_PASSWORD="${ALICE_PASSWORD}" run_cli "${ALICE_HOME}" rotate-key)"
 echo "${ROTATE_OUT}" | grep -q "rotated key pair" || fail "key rotation failed: ${ROTATE_OUT}"
 
 info "Alice sets a secret after key rotation"
@@ -184,13 +189,13 @@ info "testing login rate limiting"
 RATE_HOME="/tmp/nivrit-e2e-rate"
 # Register a victim account.
 RATE_EMAIL="rate-${SUFFIX}@example.com"
-run_cli "${RATE_HOME}" register --email "${RATE_EMAIL}" --password RateLimit123! --name Rate
+NIV_PASSWORD="rate-limit-glacier-tuesday" run_cli "${RATE_HOME}" register --email "${RATE_EMAIL}" --name Rate
 for i in {1..5}; do
-  run_cli "${RATE_HOME}" login --email "${RATE_EMAIL}" --password wrongpassword || true
+  NIV_PASSWORD="wrong-password-entirely-here" run_cli "${RATE_HOME}" login --email "${RATE_EMAIL}" || true
 done
 # Sixth attempt should be rate limited (HTTP 403).
 set +e
-run_cli "${RATE_HOME}" login --email "${RATE_EMAIL}" --password RateLimit123! >/dev/null 2>&1
+NIV_PASSWORD="rate-limit-glacier-tuesday" run_cli "${RATE_HOME}" login --email "${RATE_EMAIL}" >/dev/null 2>&1
 RC=$?
 set -e
 [ "${RC}" -ne 0 ] || fail "sixth login should have been rate limited"

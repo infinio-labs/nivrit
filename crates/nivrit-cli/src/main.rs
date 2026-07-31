@@ -43,8 +43,13 @@ enum Commands {
     Register {
         #[arg(short, long)]
         email: String,
+        /// Insecure: visible in shell history and `ps`. Prefer the interactive
+        /// prompt, --password-stdin, or NIVRIT_PASSWORD.
         #[arg(short, long)]
-        password: String,
+        password: Option<String>,
+        /// Read the master password from standard input.
+        #[arg(long)]
+        password_stdin: bool,
         #[arg(short, long)]
         name: Option<String>,
     },
@@ -52,10 +57,19 @@ enum Commands {
     Login {
         #[arg(short, long)]
         email: Option<String>,
+        /// Insecure: visible in shell history and `ps`. Prefer the interactive
+        /// prompt, --password-stdin, or NIVRIT_PASSWORD.
         #[arg(short, long)]
         password: Option<String>,
-        /// Authenticate with a personal access token instead of a password
-        #[arg(short, long)]
+        /// Read the master password from standard input.
+        #[arg(long)]
+        password_stdin: bool,
+        /// Authenticate with a personal access token instead of a password.
+        /// Prefer NIVRIT_PAT over this flag, for the same reason.
+        ///
+        /// No short form: `-p` belongs to --password, and clap rejects a
+        /// duplicate short name for the whole command.
+        #[arg(long)]
         pat: Option<String>,
     },
     /// Show the current user and session status
@@ -292,8 +306,13 @@ enum Commands {
     },
     /// Rotate the current user's hybrid key pair and re-encrypt project keys
     RotateKey {
+        /// Insecure: visible in shell history and `ps`. Prefer the interactive
+        /// prompt, --password-stdin, or NIVRIT_PASSWORD.
         #[arg(short, long)]
-        password: String,
+        password: Option<String>,
+        /// Read the master password from standard input.
+        #[arg(long)]
+        password_stdin: bool,
     },
 }
 
@@ -323,11 +342,23 @@ struct CliConfig {
     encrypted_private_key: Option<String>,
     private_key_nonce: Option<String>,
     private_key_algorithm: Option<String>,
-    /// Base64-encoded plaintext hybrid private key, cached locally after login.
-    private_key: Option<String>,
+    /// Whether this session decrypted the master password at least once, so
+    /// commands needing a project key can tell "no password was given" apart
+    /// from "not a member of this project". The plaintext private key itself
+    /// is never cached - only decrypted project keys are, and those are
+    /// wrapped under a local device key (see `encrypt_local`).
+    #[serde(default)]
+    master_key_available: bool,
     project_keys: HashMap<String, EncryptedKey>,
 }
 
+/// A value encrypted at rest under the local device wrapping key (see
+/// `local_wrap_key`), not under the user's password. This protects the config
+/// file from casual disclosure (backups, `cat`, other local processes reading
+/// the world-readable-by-default home directory) but not from another local
+/// process running as the same user, which could read the wrapping key too -
+/// that ceiling is inherent to any locally-cached secret and requires an OS
+/// keyring or hardware key to close.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct EncryptedKey {
     ciphertext: String,
@@ -347,8 +378,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::Register {
             email,
             password,
+            password_stdin,
             name,
         } => {
+            let password = resolve_new_password(password, password_stdin)?;
             register(
                 &client,
                 &cli.server,
@@ -363,9 +396,37 @@ async fn main() -> anyhow::Result<()> {
         Commands::Login {
             email,
             password,
+            password_stdin,
             pat,
         } => {
+            let pat = match pat {
+                Some(pat) => {
+                    eprintln!(
+                        "warning: passing a token with --pat is insecure - it is saved in your \
+                         shell history and visible in `ps`. Use {PAT_ENV} instead."
+                    );
+                    Some(pat)
+                }
+                None => std::env::var(PAT_ENV).ok().filter(|v| !v.is_empty()),
+            };
+
             if let Some(pat) = pat {
+                // The password is optional here: without it the CLI holds an API
+                // session but cannot decrypt anything, which is still useful for
+                // commands that only touch metadata. So this does not prompt —
+                // it uses a password only if one was actually supplied, by any
+                // of the three means, including the environment.
+                let password_supplied =
+                    password.is_some() || password_stdin || std::env::var(PASSWORD_ENV).is_ok();
+                let password = if password_supplied {
+                    Some(resolve_password(
+                        password,
+                        password_stdin,
+                        "Master password: ",
+                    )?)
+                } else {
+                    None
+                };
                 login_with_pat(
                     &client,
                     &cli.server,
@@ -377,7 +438,7 @@ async fn main() -> anyhow::Result<()> {
                 .await?
             } else {
                 let email = email.ok_or_else(|| anyhow::anyhow!("--email required"))?;
-                let password = password.ok_or_else(|| anyhow::anyhow!("--password required"))?;
+                let password = resolve_password(password, password_stdin, "Master password: ")?;
                 login(&client, &cli.server, &mut config, format, &email, &password).await?
             }
         }
@@ -577,13 +638,95 @@ async fn main() -> anyhow::Result<()> {
             email,
             role,
         } => invite_member(&client, &config, format, &project_id, &email, &role).await?,
-        Commands::RotateKey { password } => {
+        Commands::RotateKey {
+            password,
+            password_stdin,
+        } => {
+            let password = resolve_password(password, password_stdin, "Master password: ")?;
             rotate_key(&client, &mut config, format, &password).await?
         }
     }
 
     save_config(&config)?;
     Ok(())
+}
+
+/// Environment variable holding the master password, for non-interactive use.
+const PASSWORD_ENV: &str = "NIVRIT_PASSWORD";
+/// Environment variable holding a personal access token.
+const PAT_ENV: &str = "NIVRIT_PAT";
+
+/// Resolve a secret from, in order: the flag, stdin, the environment, a prompt.
+///
+/// The flag is supported but warned about. A value passed as a command-line
+/// argument is written to shell history and is visible in `ps` for the lifetime
+/// of the process — and since every one of these paths runs Argon2id, that
+/// lifetime is on the order of a second, which is ample. Docker's `--password`
+/// carries the same warning for the same reason.
+fn resolve_secret(
+    flag: Option<String>,
+    from_stdin: bool,
+    env_var: &str,
+    flag_name: &str,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    if let Some(value) = flag {
+        eprintln!(
+            "warning: passing a secret with {flag_name} is insecure - it is saved in your shell \
+             history and visible in `ps`. Use --password-stdin, {env_var}, or the interactive prompt."
+        );
+        return Ok(value);
+    }
+
+    if from_stdin {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+        // Trim only the trailing newline a pipe or heredoc adds. Leading and
+        // interior whitespace can legitimately be part of a passphrase.
+        let value = buf.strip_suffix('\n').unwrap_or(&buf);
+        let value = value.strip_suffix('\r').unwrap_or(value);
+        if value.is_empty() {
+            anyhow::bail!("no secret received on stdin");
+        }
+        return Ok(value.to_string());
+    }
+
+    if let Ok(value) = std::env::var(env_var) {
+        if !value.is_empty() {
+            return Ok(value);
+        }
+    }
+
+    let value = rpassword::prompt_password(prompt)?;
+    if value.is_empty() {
+        anyhow::bail!("no password entered");
+    }
+    Ok(value)
+}
+
+fn resolve_password(
+    flag: Option<String>,
+    from_stdin: bool,
+    prompt: &str,
+) -> anyhow::Result<String> {
+    resolve_secret(flag, from_stdin, PASSWORD_ENV, "--password", prompt)
+}
+
+/// Prompt twice when setting a password for the first time.
+///
+/// A mistyped master password at registration is unrecoverable: it wraps the
+/// private key, so nobody - including the operator - can tell you what you
+/// actually typed.
+fn resolve_new_password(flag: Option<String>, from_stdin: bool) -> anyhow::Result<String> {
+    let interactive = flag.is_none() && !from_stdin && std::env::var(PASSWORD_ENV).is_err();
+    let password = resolve_password(flag, from_stdin, "Master password: ")?;
+    if interactive {
+        let again = rpassword::prompt_password("Confirm master password: ")?;
+        if again != password {
+            anyhow::bail!("passwords did not match");
+        }
+    }
+    Ok(password)
 }
 
 fn config_path() -> PathBuf {
@@ -603,13 +746,72 @@ fn load_config() -> CliConfig {
     }
 }
 
+/// Persist the CLI config.
+///
+/// The file holds every project key the user can decrypt (wrapped under the
+/// local device key, see `encrypt_local`), so it is written owner-only.
+/// `std::fs::write` would create it 0666-and-umask — 0644 on a typical Linux
+/// box — leaving every secret in every project readable by any other local
+/// user or process able to also read the sibling keyring file.
+///
+/// The permissions are set in the same call that creates the file, not
+/// afterwards, so there is no window in which the contents exist at the wider
+/// mode.
 fn save_config(config: &CliConfig) -> anyhow::Result<()> {
     let path = config_path();
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("config path has no parent directory"))?;
-    std::fs::create_dir_all(parent)?;
-    std::fs::write(path, serde_json::to_string_pretty(config)?)?;
+    create_private_dir(parent)?;
+
+    let serialized = serde_json::to_string_pretty(config)?;
+    write_private_file(&path, serialized.as_bytes())?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_private_dir(path: &std::path::Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    if path.exists() {
+        return Ok(());
+    }
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(path: &std::path::Path) -> anyhow::Result<()> {
+    // Windows inherits restrictive ACLs from the user profile directory.
+    std::fs::create_dir_all(path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &std::path::Path, contents: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents)?;
+
+    // `mode` only applies when the file is created, so tighten an existing file
+    // that a previous version wrote with the default mode.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &std::path::Path, contents: &[u8]) -> anyhow::Result<()> {
+    std::fs::write(path, contents)?;
     Ok(())
 }
 
@@ -641,6 +843,57 @@ fn decrypt_private_key(
         .map_err(|e| anyhow::anyhow!("failed to decrypt private key: {e}"))
 }
 
+fn local_wrap_key_path() -> PathBuf {
+    config_path()
+        .parent()
+        .expect("config path always has a parent")
+        .join("keyring")
+}
+
+/// Load this device's local wrapping key, generating and persisting one on
+/// first use. Unlike the password-derived key, this never leaves the device
+/// and is not recoverable - it exists only to keep cached project keys off
+/// disk in plaintext, not to protect them from the account owner.
+fn local_wrap_key() -> anyhow::Result<[u8; 32]> {
+    load_or_create_wrap_key(&local_wrap_key_path())
+}
+
+fn load_or_create_wrap_key(path: &std::path::Path) -> anyhow::Result<[u8; 32]> {
+    if let Ok(existing) = std::fs::read(path) {
+        if let Ok(key) = <[u8; 32]>::try_from(existing.as_slice()) {
+            return Ok(key);
+        }
+    }
+    let key = nivrit_crypto::keys::random_bytes::<32>();
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("keyring path has no parent directory"))?;
+    create_private_dir(parent)?;
+    write_private_file(path, &key)?;
+    Ok(key)
+}
+
+/// Encrypt `plaintext` under the local device key for storage in the config
+/// cache (e.g. a decapsulated project key). A fresh random nonce is generated
+/// per call, unlike the placeholder empty nonce this replaces.
+fn encrypt_local(plaintext: &[u8]) -> anyhow::Result<EncryptedKey> {
+    let key = local_wrap_key()?;
+    let encrypted = encrypt_value(plaintext, &key)
+        .map_err(|e| anyhow::anyhow!("failed to encrypt cached key material: {e}"))?;
+    Ok(EncryptedKey {
+        ciphertext: STANDARD.encode(&encrypted.ciphertext),
+        nonce: STANDARD.encode(&encrypted.nonce),
+    })
+}
+
+fn decrypt_local(encrypted: &EncryptedKey) -> anyhow::Result<Vec<u8>> {
+    let key = local_wrap_key()?;
+    let ciphertext = STANDARD.decode(&encrypted.ciphertext)?;
+    let nonce = STANDARD.decode(&encrypted.nonce)?;
+    decrypt_value(&ciphertext, &nonce, &key)
+        .map_err(|e| anyhow::anyhow!("failed to decrypt cached key material: {e}"))
+}
+
 async fn register(
     client: &reqwest::Client,
     server: &str,
@@ -650,24 +903,56 @@ async fn register(
     password: &str,
     name: Option<String>,
 ) -> anyhow::Result<()> {
+    // The server sees only a derived hash and cannot judge the password behind
+    // it, so this check is the only enforcement that exists for CLI users. Same
+    // implementation the browser uses, via WASM.
+    let assessment = nivrit_crypto::password_policy::assess_password(password, Some(email));
+    if !assessment.acceptable {
+        anyhow::bail!(
+            "{}",
+            assessment
+                .message
+                .unwrap_or_else(|| "choose a stronger master password".into())
+        );
+    }
+
     let keypair = HybridUserKeyPair::generate();
     let private_key_plaintext = keypair.serialize_private_key();
     let (encrypted_private_key, private_key_nonce) =
         encrypt_private_key(&private_key_plaintext, password)?;
     let public_key = keypair.serialize_public_key();
 
+    // A second copy of the private key, wrapped under a locally generated
+    // recovery code. The server stores it as opaque ciphertext; only this
+    // recovery code can open it, and the code is never transmitted.
+    let recovery_code = nivrit_crypto::recovery::generate_recovery_code();
+    let recovery_key = nivrit_crypto::recovery::derive_recovery_key(&recovery_code, email);
+    let (encrypted_private_key_recovery, private_key_recovery_nonce) =
+        nivrit_crypto::recovery::encrypt_private_key_for_recovery(
+            &private_key_plaintext,
+            &recovery_key,
+        )?;
+
+    // The password itself is not sent; the server only ever sees these hashes.
+    let auth_hash = nivrit_crypto::derive_auth_hash(password.as_bytes(), email);
+    let recovery_auth_hash = nivrit_crypto::derive_recovery_auth_hash(&recovery_code, email);
+
     let req = serde_json::json!({
         "email": email,
-        "password": password,
+        "auth_hash": STANDARD.encode(*auth_hash),
         "name": name,
         "public_key": STANDARD.encode(&public_key),
         "encrypted_private_key": STANDARD.encode(&encrypted_private_key),
         "private_key_nonce": STANDARD.encode(&private_key_nonce),
         "private_key_algorithm": "aes256gcm-v1",
+        "recovery_auth_hash": STANDARD.encode(*recovery_auth_hash),
+        "encrypted_private_key_recovery": STANDARD.encode(&encrypted_private_key_recovery),
+        "private_key_recovery_nonce": STANDARD.encode(&private_key_recovery_nonce),
+        "private_key_recovery_algorithm": "aes256gcm-v1",
     });
 
     let res: serde_json::Value = client
-        .post(format!("{}/register", server))
+        .post(format!("{}/auth/register", server))
         .json(&req)
         .send()
         .await?
@@ -694,9 +979,8 @@ async fn register(
     config.encrypted_private_key = Some(STANDARD.encode(&encrypted_private_key));
     config.private_key_nonce = Some(STANDARD.encode(&private_key_nonce));
     config.private_key_algorithm = Some("aes256gcm-v1".into());
-    config.private_key = Some(STANDARD.encode(&private_key_plaintext));
+    config.master_key_available = true;
 
-    let recovery_code = res["recovery_code"].as_str().unwrap_or("");
     #[derive(Serialize)]
     struct RegisterOut {
         email: String,
@@ -725,11 +1009,11 @@ async fn login(
 ) -> anyhow::Result<()> {
     let req = serde_json::json!({
         "email": email,
-        "password": password,
+        "auth_hash": STANDARD.encode(*nivrit_crypto::derive_auth_hash(password.as_bytes(), email)),
     });
 
     let res: serde_json::Value = client
-        .post(format!("{}/login", server))
+        .post(format!("{}/auth/login", server))
         .json(&req)
         .send()
         .await?
@@ -786,7 +1070,7 @@ async fn finish_password_login(
     config.encrypted_private_key = Some(encrypted_private_key_b64.to_string());
     config.private_key_nonce = Some(private_key_nonce_b64.to_string());
     config.private_key_algorithm = Some(private_key_algorithm);
-    config.private_key = Some(STANDARD.encode(&private_key_plaintext));
+    config.master_key_available = true;
 
     print_login_output(format, email, config.project_keys.len());
     Ok(())
@@ -830,10 +1114,7 @@ async fn recover_project_keys(
 
         config.project_keys.insert(
             project_id.to_string(),
-            EncryptedKey {
-                ciphertext: STANDARD.encode(project_key),
-                nonce: STANDARD.encode(&[] as &[u8]),
-            },
+            encrypt_local(project_key.as_slice())?,
         );
     }
     Ok(())
@@ -906,7 +1187,7 @@ async fn login_with_pat(
         let private_key_plaintext =
             decrypt_private_key(&encrypted_private_key, &private_key_nonce, password)?;
         recover_project_keys(client, server, config, pat, &private_key_plaintext).await?;
-        config.private_key = Some(STANDARD.encode(&private_key_plaintext));
+        config.master_key_available = true;
     }
 
     print_login_output(format, email, config.project_keys.len());
@@ -1069,13 +1350,9 @@ async fn create_project(
     let project_id = res["id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("project id missing in create project response"))?;
-    config.project_keys.insert(
-        project_id.to_string(),
-        EncryptedKey {
-            ciphertext: STANDARD.encode(project_key),
-            nonce: STANDARD.encode(&[] as &[u8]),
-        },
-    );
+    config
+        .project_keys
+        .insert(project_id.to_string(), encrypt_local(&project_key)?);
 
     let slug_resp = res["slug"]
         .as_str()
@@ -2332,7 +2609,7 @@ async fn rotate_key(
     // Re-encrypt every project key we hold to the new public key.
     let mut rotated_project_keys = Vec::new();
     for (project_id, encrypted) in &config.project_keys {
-        let project_key_bytes = STANDARD.decode(&encrypted.ciphertext)?;
+        let project_key_bytes = decrypt_local(encrypted)?;
         let project_key: [u8; 32] = project_key_bytes
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid project key length"))?;
@@ -2348,11 +2625,32 @@ async fn rotate_key(
         }));
     }
 
+    // Rotation invalidates the old recovery code along with the old key pair, so
+    // mint a fresh one and re-wrap the new private key under it. Uploading this
+    // in the same request is what keeps a later password reset from restoring a
+    // key that no longer opens anything.
+    let email = config
+        .email
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("email not available; log in again"))?;
+    let recovery_code = nivrit_crypto::recovery::generate_recovery_code();
+    let recovery_key = nivrit_crypto::recovery::derive_recovery_key(&recovery_code, email);
+    let (encrypted_private_key_recovery, private_key_recovery_nonce) =
+        nivrit_crypto::recovery::encrypt_private_key_for_recovery(
+            &new_private_key_plaintext,
+            &recovery_key,
+        )?;
+    let recovery_auth_hash = nivrit_crypto::derive_recovery_auth_hash(&recovery_code, email);
+
     let req = serde_json::json!({
         "public_key": STANDARD.encode(&new_public_key),
         "encrypted_private_key": STANDARD.encode(&new_encrypted_private_key),
         "private_key_nonce": STANDARD.encode(&new_private_key_nonce),
         "private_key_algorithm": "aes256gcm-v1",
+        "encrypted_private_key_recovery": STANDARD.encode(&encrypted_private_key_recovery),
+        "private_key_recovery_nonce": STANDARD.encode(&private_key_recovery_nonce),
+        "private_key_recovery_algorithm": "aes256gcm-v1",
+        "recovery_auth_hash": STANDARD.encode(*recovery_auth_hash),
         "project_keys": rotated_project_keys,
     });
 
@@ -2371,7 +2669,7 @@ async fn rotate_key(
         config.public_key = Some(STANDARD.encode(&new_public_key));
         config.encrypted_private_key = Some(STANDARD.encode(&new_encrypted_private_key));
         config.private_key_nonce = Some(STANDARD.encode(&new_private_key_nonce));
-        config.private_key = Some(STANDARD.encode(&new_private_key_plaintext));
+        config.master_key_available = true;
     } else {
         anyhow::bail!("server did not confirm key rotation");
     }
@@ -2380,28 +2678,46 @@ async fn rotate_key(
     struct RotateOut {
         rotated: bool,
         re_encrypted: usize,
+        recovery_code: String,
     }
     print_output(
         format,
         &format!(
-            "rotated key pair; re-encrypted {} project keys",
-            rotated_project_keys.len()
+            "rotated key pair; re-encrypted {} project keys\nnew recovery code: {}\nstore it now - it is not recoverable and replaces your previous code",
+            rotated_project_keys.len(),
+            recovery_code
         ),
         &RotateOut {
             rotated,
             re_encrypted: rotated_project_keys.len(),
+            recovery_code: recovery_code.clone(),
         },
     );
     Ok(())
 }
 
 fn load_project_key(config: &CliConfig, project_id: &str) -> anyhow::Result<[u8; 32]> {
-    let encrypted = config
-        .project_keys
-        .get(project_id)
-        .ok_or_else(|| anyhow::anyhow!("project key not found"))?;
-    let ciphertext = STANDARD.decode(&encrypted.ciphertext)?;
-    ciphertext
+    let encrypted = config.project_keys.get(project_id).ok_or_else(|| {
+        // Almost always means the session was established with a token but no
+        // master password, so no project key could be unwrapped. Saying so beats
+        // "project key not found", which reads like the project is missing.
+        if !config.master_key_available {
+            anyhow::anyhow!(
+                concat!(
+                    "no decryption key for this project. ",
+                    "This session was created without a master password, so it can read ",
+                    "metadata but not secrets. Log in again with your password ",
+                    "(NIVRIT_PASSWORD, --password-stdin, or the interactive prompt)."
+                )
+            )
+        } else {
+            anyhow::anyhow!(
+                "no key for project {project_id}. You may not be a member of it, or you may need to log in again to pick up a newly granted membership."
+            )
+        }
+    })?;
+    let project_key = decrypt_local(encrypted)?;
+    project_key
         .try_into()
         .map_err(|_| anyhow::anyhow!("invalid project key length"))
 }
@@ -2422,9 +2738,10 @@ async fn invite_member(
     // 1. Look up the invitee's public key.
     let public_key_res: serde_json::Value = client
         .get(format!(
-            "{}/users/public-key?email={}",
+            "{}/users/public-key?email={}&project_id={}",
             config.server_url,
-            urlencoding::encode(email)
+            urlencoding::encode(email),
+            project_id
         ))
         .bearer_auth(token)
         .send()
@@ -2508,6 +2825,130 @@ mod tests {
         assert!(decrypt_private_key(&encrypted, &nonce, "wrong-password").is_err());
     }
 
+    /// The cached project-key wrap key must survive across process
+    /// invocations (each CLI command is a fresh process), so a second load
+    /// against the same path has to return the same key rather than minting
+    /// a new one and orphaning everything encrypted under the first.
+    #[test]
+    fn wrap_key_persists_across_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keyring");
+        let first = load_or_create_wrap_key(&path).unwrap();
+        let second = load_or_create_wrap_key(&path).unwrap();
+        assert_eq!(first, second);
+    }
+
+    /// `encrypt_local` must generate a real random nonce per call - this is
+    /// the exact bug being fixed (the old cache used a hardcoded empty nonce,
+    /// making the "ciphertext" field literally plaintext).
+    #[test]
+    fn encrypt_local_roundtrips_with_distinct_nonces() {
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        let plaintext = b"project-dek-bytes-not-really-32";
+
+        let a = encrypt_local(plaintext).unwrap();
+        let b = encrypt_local(plaintext).unwrap();
+        assert_ne!(a.nonce, b.nonce, "each encryption must use a fresh nonce");
+        assert_ne!(
+            a.ciphertext, b.ciphertext,
+            "ciphertext must not be a plaintext copy"
+        );
+
+        assert_eq!(decrypt_local(&a).unwrap(), plaintext);
+        assert_eq!(decrypt_local(&b).unwrap(), plaintext);
+    }
+
+    /// The config file holds every decrypted project key (device-wrapped, but
+    /// still a step closer to plaintext than anything else on disk), so it
+    /// must never be group- or world-readable.
+    #[test]
+    #[cfg(unix)]
+    fn config_file_is_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join(".nivrit");
+        let path = nested.join("config.json");
+
+        create_private_dir(&nested).unwrap();
+        write_private_file(&path, b"{}").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "config must be owner read/write only");
+
+        let dir_mode = std::fs::metadata(&nested).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "config directory must be owner-only");
+    }
+
+    /// A config written by an older version with the default mode must be
+    /// tightened on the next save, not left readable.
+    #[test]
+    #[cfg(unix)]
+    fn existing_world_readable_config_is_tightened() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, b"{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_private_file(&path, b"{}").unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    /// Validates the whole command tree: duplicate short flags, conflicting
+    /// argument names, malformed defaults. `niv login` previously panicked on
+    /// startup because `-p` was claimed by both --password and --pat, and
+    /// nothing caught it because no test constructed the parser.
+    #[test]
+    fn cli_definition_is_valid() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    /// The flag path must keep working for existing scripts, warning and all.
+    #[test]
+    fn resolve_secret_prefers_the_flag() {
+        let value = resolve_secret(
+            Some("from-flag".into()),
+            false,
+            "NIVRIT_TEST_UNSET_VAR",
+            "--password",
+            "unused: ",
+        )
+        .unwrap();
+        assert_eq!(value, "from-flag");
+    }
+
+    #[test]
+    fn resolve_secret_reads_the_environment_when_no_flag_is_given() {
+        // Safety: single-threaded test, and the variable name is unique to it.
+        unsafe { std::env::set_var("NIVRIT_TEST_SECRET_ENV", "from-env") };
+        let value = resolve_secret(
+            None,
+            false,
+            "NIVRIT_TEST_SECRET_ENV",
+            "--password",
+            "unused: ",
+        )
+        .unwrap();
+        unsafe { std::env::remove_var("NIVRIT_TEST_SECRET_ENV") };
+        assert_eq!(value, "from-env");
+    }
+
+    #[test]
+    fn resolve_secret_ignores_an_empty_environment_variable() {
+        // An exported-but-empty variable should fall through to the prompt
+        // rather than silently authenticating with "".
+        unsafe { std::env::set_var("NIVRIT_TEST_EMPTY_ENV", "") };
+        let is_empty = std::env::var("NIVRIT_TEST_EMPTY_ENV").map(|v| v.is_empty());
+        unsafe { std::env::remove_var("NIVRIT_TEST_EMPTY_ENV") };
+        assert_eq!(is_empty, Ok(true));
+    }
+
     #[test]
     fn self_encapsulated_project_key_roundtrip() {
         let project_key = nivrit_crypto::keys::random_bytes::<32>();
@@ -2520,6 +2961,6 @@ mod tests {
         let decoded: EncapsulatedProjectKey = serde_json::from_slice(&json).unwrap();
         let recovered = decapsulate_project_key_hybrid(&decoded, &private_key).unwrap();
 
-        assert_eq!(project_key, recovered);
+        assert_eq!(project_key, *recovered);
     }
 }

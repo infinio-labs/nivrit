@@ -14,6 +14,31 @@ enum Request {
     GenerateKeypair {
         password: String,
     },
+    /// Everything registration needs, computed locally. See
+    /// `nivrit_web_crypto::generate_registration_material`.
+    GenerateRegistrationMaterial {
+        password: String,
+        email: String,
+    },
+    /// Opaque credential sent to the server in place of the password.
+    DeriveAuthHash {
+        password: String,
+        email: String,
+    },
+    /// Opaque credential proving possession of a recovery code.
+    DeriveRecoveryAuthHash {
+        recovery_code: String,
+        email: String,
+    },
+    /// Recover the private key from a recovery blob and re-wrap it under a new
+    /// password, without either password or the recovery code leaving the client.
+    ResetPasswordMaterial {
+        encrypted_private_key_recovery: String,
+        private_key_recovery_nonce: String,
+        recovery_code: String,
+        email: String,
+        new_password: String,
+    },
     DecryptPrivateKey {
         encrypted_private_key: String,
         nonce: String,
@@ -102,6 +127,93 @@ fn run(req: Request) -> Response {
                 Err(e) => err(format!("encrypt private key: {e}")),
             }
         }
+        Request::GenerateRegistrationMaterial { password, email } => {
+            let keypair = HybridUserKeyPair::generate();
+            let plaintext_private = keypair.serialize_private_key();
+
+            let salt = nivrit_crypto::random_bytes::<16>();
+            let derived = derive_key(password.as_bytes(), &salt);
+            let encrypted = match crypto_encrypt_value(&plaintext_private, &derived) {
+                Ok(enc) => enc,
+                Err(e) => return err(format!("encrypt private key: {e}")),
+            };
+            let mut combined = salt.to_vec();
+            combined.extend_from_slice(&encrypted.ciphertext);
+
+            let recovery_code = nivrit_crypto::recovery::generate_recovery_code();
+            let recovery_key = nivrit_crypto::recovery::derive_recovery_key(&recovery_code, &email);
+            let (recovery_ciphertext, recovery_nonce) =
+                match nivrit_crypto::recovery::encrypt_private_key_for_recovery(
+                    &plaintext_private,
+                    &recovery_key,
+                ) {
+                    Ok(v) => v,
+                    Err(e) => return err(format!("encrypt recovery blob: {e}")),
+                };
+
+            ok(serde_json::json!({
+                "public_key": b64_encode(&keypair.serialize_public_key()),
+                "encrypted_private_key": b64_encode(&combined),
+                "private_key_nonce": b64_encode(&encrypted.nonce),
+                "private_key_algorithm": "aes256gcm-v1",
+                "auth_hash": b64_encode(&*nivrit_crypto::derive_auth_hash(password.as_bytes(), &email)),
+                "recovery_code": recovery_code,
+                "recovery_auth_hash": b64_encode(&*nivrit_crypto::derive_recovery_auth_hash(&recovery_code, &email)),
+                "encrypted_private_key_recovery": b64_encode(&recovery_ciphertext),
+                "private_key_recovery_nonce": b64_encode(&recovery_nonce),
+                "private_key_recovery_algorithm": "aes256gcm-v1",
+            }))
+        }
+        Request::DeriveAuthHash { password, email } => ok(serde_json::json!({
+            "auth_hash": b64_encode(&*nivrit_crypto::derive_auth_hash(password.as_bytes(), &email)),
+        })),
+        Request::DeriveRecoveryAuthHash {
+            recovery_code,
+            email,
+        } => ok(serde_json::json!({
+            "recovery_auth_hash": b64_encode(&*nivrit_crypto::derive_recovery_auth_hash(&recovery_code, &email)),
+        })),
+        Request::ResetPasswordMaterial {
+            encrypted_private_key_recovery,
+            private_key_recovery_nonce,
+            recovery_code,
+            email,
+            new_password,
+        } => {
+            let ciphertext = match b64_decode(&encrypted_private_key_recovery) {
+                Ok(v) => v,
+                Err(e) => return err(e.to_string()),
+            };
+            let nonce = match b64_decode(&private_key_recovery_nonce) {
+                Ok(v) => v,
+                Err(e) => return err(e.to_string()),
+            };
+            let recovery_key = nivrit_crypto::recovery::derive_recovery_key(&recovery_code, &email);
+            let plaintext_private = match nivrit_crypto::recovery::decrypt_private_key_from_recovery(
+                &ciphertext,
+                &nonce,
+                &recovery_key,
+            ) {
+                Ok(v) => v,
+                Err(_) => return err("recovery code did not decrypt the private key"),
+            };
+
+            let salt = nivrit_crypto::random_bytes::<16>();
+            let derived = derive_key(new_password.as_bytes(), &salt);
+            let encrypted = match crypto_encrypt_value(&plaintext_private, &derived) {
+                Ok(enc) => enc,
+                Err(e) => return err(format!("re-encrypt private key: {e}")),
+            };
+            let mut combined = salt.to_vec();
+            combined.extend_from_slice(&encrypted.ciphertext);
+
+            ok(serde_json::json!({
+                "auth_hash": b64_encode(&*nivrit_crypto::derive_auth_hash(new_password.as_bytes(), &email)),
+                "encrypted_private_key": b64_encode(&combined),
+                "private_key_nonce": b64_encode(&encrypted.nonce),
+                "private_key_algorithm": "aes256gcm-v1",
+            }))
+        }
         Request::DecryptPrivateKey {
             encrypted_private_key,
             nonce,
@@ -171,7 +283,7 @@ fn run(req: Request) -> Response {
             };
             match decapsulate_project_key_hybrid(&encapsulated, &private_key) {
                 Ok(project_key) => {
-                    ok(serde_json::json!({ "project_key": b64_encode(&project_key) }))
+                    ok(serde_json::json!({ "project_key": b64_encode(&*project_key) }))
                 }
                 Err(e) => err(format!("decapsulate project key: {e}")),
             }

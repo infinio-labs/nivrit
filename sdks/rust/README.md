@@ -2,7 +2,7 @@
 
 ```toml
 [dependencies]
-nivrit-sdk = { git = "https://github.com/infiniolabs/nivrit" }
+nivrit-sdk = { git = "https://github.com/infinio-labs/nivrit" }
 ```
 
 ## Usage

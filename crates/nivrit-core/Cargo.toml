@@ -1,5 +1,6 @@
 [package]
 name = "nivrit-core"
+description = "Shared types and errors for Nivrit, a post-quantum secrets manager"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

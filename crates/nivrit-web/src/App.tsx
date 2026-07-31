@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { KeyRound, Loader2, Mail, Shield } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Loader2 } from './components/icons';
 import { initCrypto } from './crypto';
-import { oauthAuthorizeUrl } from './api';
+import { SessionExpiredError, oauthAuthorizeUrl } from './api';
+import { navigate, parseRoute, replaceRoute, type DashboardTab } from './router';
 import {
   clearSession,
   createEnvironmentSession,
@@ -12,6 +13,12 @@ import {
   forgotPasswordSession,
   getMyOrgsSession,
   getProjectEnvironments,
+  listFoldersSession,
+  createFolderSession,
+  deleteFolderSession,
+  listImportsSession,
+  createImportSession,
+  deleteImportSession,
   getSession,
   inviteProjectMember,
   listEncryptedSecrets,
@@ -27,16 +34,17 @@ import {
   type SecretEntry,
   type Session,
 } from './session';
-import { Button, Card, Input, Label } from './components/ui';
 import { ToastContainer, type ToastMessage } from './components/Toast';
-import { AuthLayout } from './components/AuthLayout';
-import { AuthScreen } from './components/AuthScreen';
+import { AuthViews } from './components/AuthViews';
 import { RecoveryCodeModal } from './components/RecoveryCodeModal';
 import { ImportEnvModal } from './components/ImportEnvModal';
 import { Dashboard } from './components/Dashboard';
 import { SecretsTab } from './components/SecretsTab';
 import { MembersTab } from './components/MembersTab';
 import { SettingsTab } from './components/SettingsTab';
+import { AccessTokensTab } from './components/AccessTokensTab';
+import { AuditLogTab } from './components/AuditLogTab';
+import { SecretHistoryModal } from './components/SecretHistoryModal';
 
 interface Org {
   id: string;
@@ -59,13 +67,59 @@ interface Environment {
 }
 
 type View = 'auth' | 'mfa' | 'oauth' | 'forgot' | 'reset' | 'dashboard';
-type Tab = 'secrets' | 'members' | 'settings';
+type Tab = 'secrets' | 'members' | 'audit' | 'tokens' | 'settings';
 
 function App() {
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<View>('auth');
+  // One in-flight guard for the auth forms. Every one of them runs Argon2id in
+  // WASM, which is measured in seconds, so without this a second click starts a
+  // second derivation and can register twice or trip the login rate limiter.
+  const [busy, setBusy] = useState<string>('');
+  // The URL is the source of truth for which view is showing, so every screen
+  // is linkable and the back button works. `setView` is kept as a thin wrapper
+  // so the many call sites below read unchanged.
+  const [route, setRoute] = useState(() => parseRoute(new URL(window.location.href)));
   const [session, setSession] = useState<Session | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // MFA is deliberately not a route: it is a transient step holding a
+  // short-lived token, which has no business in the address bar or in history.
+  const [mfaPending, setMfaPending] = useState(false);
+
+  const view: View = mfaPending
+    ? 'mfa'
+    : route.name === 'dashboard'
+      ? 'dashboard'
+      : route.name;
+  const activeTab: Tab = route.name === 'dashboard' ? route.tab : 'secrets';
+
+  const setView = useCallback((next: View) => {
+    setMfaPending(next === 'mfa');
+    switch (next) {
+      case 'dashboard':
+        navigate({ name: 'dashboard', tab: 'secrets' });
+        break;
+      case 'forgot':
+        navigate({ name: 'forgot' });
+        break;
+      case 'mfa':
+        // Stay where we are; the MFA form replaces the auth screen in place.
+        break;
+      default:
+        navigate({ name: 'auth' });
+    }
+  }, []);
+
+  const setActiveTab = useCallback((tab: Tab) => {
+    navigate({ name: 'dashboard', tab: tab as DashboardTab });
+  }, []);
+
+  // Back and forward move between views like any other site.
+  useEffect(() => {
+    const onPopState = () => setRoute(parseRoute(new URL(window.location.href)));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   // Auth form state
   const [isRegister, setIsRegister] = useState(false);
@@ -87,15 +141,23 @@ function App() {
   const [recoveryCodeInput, setRecoveryCodeInput] = useState('');
 
   // Dashboard state
-  const [activeTab, setActiveTab] = useState<Tab>('secrets');
+
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState('');
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
+  const [folders, setFolders] = useState<{ id: string; name: string; path: string }[]>([]);
+  // Empty string means the environment root, matching ContextSelect's placeholder.
+  const [selectedFolderId, setSelectedFolderId] = useState('');
+  const [imports, setImports] = useState<{ id: string; source_environment_id: string }[]>([]);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [importSourceEnvId, setImportSourceEnvId] = useState('');
   const [secrets, setSecrets] = useState<SecretEntry[]>([]);
   const [listing, setListing] = useState(false);
+  // Labels inherited secrets with the environment they came from.
+  const environmentNames = new Map(environments.map((e) => [e.id, e.name || e.slug]));
   const [secretKey, setSecretKey] = useState('');
   const [secretValue, setSecretValue] = useState('');
   const [editingSecretKey, setEditingSecretKey] = useState('');
@@ -109,6 +171,9 @@ function App() {
   const [newProjectSlug, setNewProjectSlug] = useState('');
   const [newEnvName, setNewEnvName] = useState('');
   const [newEnvSlug, setNewEnvSlug] = useState('');
+
+  // Secret version history
+  const [historyKey, setHistoryKey] = useState('');
 
   // Import .env modal
   const [importOpen, setImportOpen] = useState(false);
@@ -126,10 +191,8 @@ function App() {
   useEffect(() => {
     initCrypto()
       .then(() => {
-        localStorage.removeItem('nivrit_token');
         setLoading(false);
-        detectOAuthCallback();
-        detectResetToken();
+        consumeRouteParameters();
       })
       .catch((e) => {
         showToast(`failed to initialize crypto: ${e}`, 'error');
@@ -193,13 +256,51 @@ function App() {
   }, [selectedProjectId]);
 
   useEffect(() => {
+    setSelectedFolderId('');
+    if (!selectedProjectId || !selectedEnvironmentId) {
+      setFolders([]);
+      return;
+    }
+    let cancelled = false;
+    listFoldersSession(selectedProjectId, selectedEnvironmentId)
+      .then((items) => {
+        if (!cancelled) setFolders(items);
+      })
+      .catch(() => setFolders([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId, selectedEnvironmentId]);
+
+  useEffect(() => {
+    if (!selectedProjectId || !selectedEnvironmentId) {
+      setImports([]);
+      return;
+    }
+    let cancelled = false;
+    listImportsSession(selectedProjectId, selectedEnvironmentId, selectedFolderId || null)
+      .then((items) => {
+        if (!cancelled) setImports(items);
+      })
+      .catch(() => setImports([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId, selectedEnvironmentId, selectedFolderId]);
+
+  useEffect(() => {
     if (!selectedProjectId || !selectedEnvironmentId) {
       setSecrets([]);
       return;
     }
     let cancelled = false;
     setListing(true);
-    listEncryptedSecrets(selectedProjectId, selectedEnvironmentId)
+    listEncryptedSecrets(
+      selectedProjectId,
+      selectedEnvironmentId,
+      selectedFolderId || null,
+      environmentNames
+    )
       .then((items) => {
         if (cancelled) return;
         setSecrets(items);
@@ -209,29 +310,30 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedProjectId, selectedEnvironmentId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId, selectedEnvironmentId, selectedFolderId, imports]);
 
-  function detectOAuthCallback() {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const provider = params.get('provider');
-    const state = params.get('state');
-    if (code && provider && state) {
-      setOauthProvider(provider);
-      setOauthCode(code);
-      setOauthState(state);
-      setView('oauth');
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }
-
-  function detectResetToken() {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
-    if (token) {
-      setResetToken(token);
-      setView('reset');
-      window.history.replaceState({}, document.title, window.location.pathname);
+  /**
+   * Lift one-time values out of the URL and then scrub them from it.
+   *
+   * An OAuth code and a reset token are single-use credentials. Leaving them in
+   * the address bar puts them in browser history and in the `Referer` of any
+   * outbound request, and lets the user navigate back onto a spent one.
+   * `replaceRoute` rewrites the entry without adding to the history stack, so
+   * back goes where it did before.
+   */
+  function consumeRouteParameters() {
+    const current = parseRoute(new URL(window.location.href));
+    if (current.name === 'oauth') {
+      setOauthProvider(current.provider);
+      setOauthCode(current.code);
+      setOauthState(current.state);
+      replaceRoute(current);
+      setRoute(current);
+    } else if (current.name === 'reset') {
+      setResetToken(current.token);
+      replaceRoute(current);
+      setRoute(current);
     }
   }
 
@@ -244,9 +346,44 @@ function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }
 
+  /**
+   * Let the browser paint before running blocking work.
+   *
+   * Argon2id runs synchronously inside the WASM module on the main thread, so
+   * setting a "working" flag and calling straight into it would freeze the page
+   * before React ever renders the flag. Yielding one frame first means the user
+   * sees the pending state instead of a dead UI.
+   */
+  async function withBusy<T>(label: string, work: () => Promise<T>): Promise<T | undefined> {
+    if (busy) return undefined;
+    setBusy(label);
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+    try {
+      return await work();
+    } catch (e) {
+      if (e instanceof SessionExpiredError) {
+        handleSessionExpired();
+        return undefined;
+      }
+      showToast(e instanceof Error ? e.message : String(e), 'error');
+      return undefined;
+    } finally {
+      setBusy('');
+    }
+  }
+
+  /** The server rejected our token: drop keys and return to sign-in. */
+  function handleSessionExpired() {
+    clearSession();
+    setSession(null);
+    resetDashboard();
+    setView('auth');
+    showToast('Your session has expired. Please sign in again.', 'error');
+  }
+
   async function handleAuth(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy(isRegister ? 'Creating your vault…' : 'Signing in…', async () => {
       if (isRegister) {
         const { recoveryCode: rc } = await registerSession(email, password, name || undefined);
         setRecoveryCode(rc);
@@ -259,22 +396,21 @@ function App() {
           return;
         }
       }
+      setPassword('');
       setSession(getSession());
       setView('dashboard');
-    } catch {
-      showToast(isRegister ? 'registration failed' : 'login failed', 'error');
-    }
+    });
   }
 
   async function handleMfa(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy('Verifying…', async () => {
       await loginTotpSession(tempToken, totpCode, mfaPassword);
+      setMfaPassword('');
+      setTotpCode('');
       setSession(getSession());
       setView('dashboard');
-    } catch {
-      showToast('invalid TOTP code', 'error');
-    }
+    });
   }
 
   async function handleOAuth(provider: 'google' | 'github') {
@@ -288,7 +424,7 @@ function App() {
 
   async function handleOAuthComplete(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy('Setting up your vault…', async () => {
       const { recoveryCode: rc } = await processOAuthCallback(
         oauthProvider,
         oauthCode,
@@ -296,34 +432,38 @@ function App() {
         password
       );
       if (rc) setRecoveryCode(rc);
+      setPassword('');
       setSession(getSession());
       setView('dashboard');
-    } catch {
-      showToast('OAuth login failed', 'error');
-    }
+    });
   }
 
   async function handleForgot(e: React.FormEvent) {
     e.preventDefault();
-    try {
+    await withBusy('Sending…', async () => {
       await forgotPasswordSession(email);
       showToast('If this email exists, a reset link has been sent.', 'success');
       setView('auth');
-    } catch {
-      showToast('failed to send reset email', 'error');
-    }
+    });
   }
 
   async function handleReset(e: React.FormEvent) {
     e.preventDefault();
-    try {
-      await resetPasswordSession(resetToken, recoveryCodeInput, password);
+    await withBusy('Recovering your keys…', async () => {
+      const { recoveryCode: rc } = await resetPasswordSession(
+        resetToken,
+        recoveryCodeInput,
+        password
+      );
+      setPassword('');
+      setRecoveryCodeInput('');
       setSession(getSession());
       setView('dashboard');
-      showToast('password reset successfully', 'success');
-    } catch {
-      showToast('password reset failed', 'error');
-    }
+      // The reset just minted a new recovery code and retired the one just
+      // used, so it has to be shown now - this is the only time it exists.
+      setRecoveryCode(rc);
+      showToast('Password reset. You are signed in.', 'success');
+    });
   }
 
   function handleLogout() {
@@ -348,7 +488,14 @@ function App() {
     if (!selectedProjectId || !selectedEnvironmentId) return;
     setListing(true);
     try {
-      const items = await listEncryptedSecrets(selectedProjectId, selectedEnvironmentId);
+      // Must carry the selected folder, or saving inside a folder reloads the
+      // root and the secret that was just written appears to have vanished.
+      const items = await listEncryptedSecrets(
+        selectedProjectId,
+        selectedEnvironmentId,
+        selectedFolderId || null,
+        environmentNames
+      );
       setSecrets(items);
     } catch (e) {
       console.warn('failed to refresh secrets', e);
@@ -357,18 +504,78 @@ function App() {
     }
   }
 
+  async function reloadFolders() {
+    setFolders(await listFoldersSession(selectedProjectId, selectedEnvironmentId));
+  }
+
+  async function reloadImports() {
+    setImports(
+      await listImportsSession(selectedProjectId, selectedEnvironmentId, selectedFolderId || null)
+    );
+  }
+
+  async function handleCreateFolder(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newFolderName.trim()) return;
+    await withBusy('Creating folder…', async () => {
+      await createFolderSession(selectedProjectId, selectedEnvironmentId, newFolderName);
+      setNewFolderName('');
+      await reloadFolders();
+      showToast('folder created', 'success');
+    });
+  }
+
+  async function handleDeleteFolder(folderId: string) {
+    const folder = folders.find((f) => f.id === folderId);
+    if (!window.confirm(`Delete folder "${folder?.name ?? folderId}"?`)) return;
+    await withBusy('Deleting folder…', async () => {
+      await deleteFolderSession(selectedProjectId, folderId);
+      if (selectedFolderId === folderId) setSelectedFolderId('');
+      await reloadFolders();
+      showToast('folder deleted', 'success');
+    });
+  }
+
+  async function handleCreateImport(e: React.FormEvent) {
+    e.preventDefault();
+    if (!importSourceEnvId) return;
+    await withBusy('Linking environment…', async () => {
+      await createImportSession(
+        selectedProjectId,
+        selectedEnvironmentId,
+        importSourceEnvId,
+        selectedFolderId || null
+      );
+      setImportSourceEnvId('');
+      await reloadImports();
+      showToast('environment linked', 'success');
+    });
+  }
+
+  async function handleDeleteImport(importId: string) {
+    await withBusy('Removing link…', async () => {
+      await deleteImportSession(selectedProjectId, importId);
+      await reloadImports();
+      showToast('link removed', 'success');
+    });
+  }
+
   async function handleSetSecret(e: React.FormEvent) {
     e.preventDefault();
-    try {
-      await setEncryptedSecret(selectedProjectId, selectedEnvironmentId, secretKey, secretValue);
+    await withBusy('Encrypting…', async () => {
+      await setEncryptedSecret(
+        selectedProjectId,
+        selectedEnvironmentId,
+        secretKey,
+        secretValue,
+        selectedFolderId || null
+      );
       setSecretKey('');
       setSecretValue('');
       setEditingSecretKey('');
       await refreshSecrets();
       showToast('secret saved', 'success');
-    } catch {
-      showToast('failed to save secret', 'error');
-    }
+    });
   }
 
   function handleStartEdit(secret: SecretEntry) {
@@ -426,7 +633,13 @@ function App() {
     try {
       for (const { key, value } of entries) {
         try {
-          await setEncryptedSecret(selectedProjectId, selectedEnvironmentId, key, value);
+          await setEncryptedSecret(
+            selectedProjectId,
+            selectedEnvironmentId,
+            key,
+            value,
+            selectedFolderId || null
+          );
           imported++;
         } catch {
           failed++;
@@ -451,7 +664,12 @@ function App() {
   async function handleDeleteSecret(key: string) {
     if (!confirm(`Delete secret "${key}"?`)) return;
     try {
-      await deleteEncryptedSecret(selectedProjectId, selectedEnvironmentId, key);
+      await deleteEncryptedSecret(
+        selectedProjectId,
+        selectedEnvironmentId,
+        key,
+        selectedFolderId || null
+      );
       await refreshSecrets();
       showToast('secret deleted', 'success');
     } catch {
@@ -545,7 +763,7 @@ function App() {
     const s = getSession();
     if (!s) return;
     try {
-      await disableTotpSession(s.token, disableTotpPassword, disableTotpCode);
+      await disableTotpSession(s.token, s.email, disableTotpPassword, disableTotpCode);
       setTotpEnabled(false);
       setDisableTotpPassword('');
       setDisableTotpCode('');
@@ -567,179 +785,30 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      {view === 'auth' && (
-        <AuthLayout>
-          <AuthScreen
-            isRegister={isRegister}
-            setIsRegister={setIsRegister}
-            email={email}
-            setEmail={setEmail}
-            password={password}
-            setPassword={setPassword}
-            name={name}
-            setName={setName}
-            onSubmit={handleAuth}
-            onOAuth={handleOAuth}
-            onForgot={() => setView('forgot')}
-          />
-        </AuthLayout>
-      )}
-
-      {view === 'mfa' && (
-        <AuthLayout>
-          <Card className="w-full max-w-sm p-8 shadow-lg">
-            <div className="mb-6 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30">
-                <Shield size={24} />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                Two-factor authentication
-              </h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                Enter the code from your authenticator app.
-              </p>
-            </div>
-            <form onSubmit={handleMfa} className="space-y-4">
-              <div>
-                <Label htmlFor="totp-code">Authenticator code</Label>
-                <Input
-                  id="totp-code"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="000000"
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value)}
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full">
-                Verify
-              </Button>
-            </form>
-          </Card>
-        </AuthLayout>
-      )}
-
-      {view === 'oauth' && (
-        <AuthLayout>
-          <Card className="w-full max-w-sm p-8 shadow-lg">
-            <div className="mb-6 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30">
-                <KeyRound size={24} />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                Unlock your vault
-              </h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                {isRegister
-                  ? 'Set a master password to encrypt your keys.'
-                  : 'Enter your master password to decrypt your keys.'}
-              </p>
-            </div>
-            <form onSubmit={handleOAuthComplete} className="space-y-4">
-              <div>
-                <Label htmlFor="oauth-password">Master password</Label>
-                <Input
-                  id="oauth-password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={8}
-                />
-              </div>
-              <Button type="submit" className="w-full">
-                Continue
-              </Button>
-            </form>
-          </Card>
-        </AuthLayout>
-      )}
-
-      {view === 'forgot' && (
-        <AuthLayout>
-          <Card className="w-full max-w-sm p-8 shadow-lg">
-            <div className="mb-6 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30">
-                <Mail size={24} />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Reset password</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                We will email you a reset link.
-              </p>
-            </div>
-            <form onSubmit={handleForgot} className="space-y-4">
-              <div>
-                <Label htmlFor="reset-email">Email</Label>
-                <Input
-                  id="reset-email"
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full">
-                Send reset link
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full"
-                onClick={() => setView('auth')}
-              >
-                Back to sign in
-              </Button>
-            </form>
-          </Card>
-        </AuthLayout>
-      )}
-
-      {view === 'reset' && (
-        <AuthLayout>
-          <Card className="w-full max-w-sm p-8 shadow-lg">
-            <div className="mb-6 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30">
-                <KeyRound size={24} />
-              </div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">New password</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                Enter your recovery code and a new password.
-              </p>
-            </div>
-            <form onSubmit={handleReset} className="space-y-4">
-              <div>
-                <Label htmlFor="recovery-code">Recovery code</Label>
-                <Input
-                  id="recovery-code"
-                  type="text"
-                  placeholder="XXXX-XXXX-XXXX-XXXX"
-                  value={recoveryCodeInput}
-                  onChange={(e) => setRecoveryCodeInput(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="new-password">New password</Label>
-                <Input
-                  id="new-password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={8}
-                />
-              </div>
-              <Button type="submit" className="w-full">
-                Reset password
-              </Button>
-            </form>
-          </Card>
-        </AuthLayout>
+      {view !== 'dashboard' && (
+        <AuthViews
+          view={view}
+          isRegister={isRegister}
+          setIsRegister={setIsRegister}
+          email={email}
+          setEmail={setEmail}
+          password={password}
+          setPassword={setPassword}
+          name={name}
+          setName={setName}
+          busy={busy}
+          totpCode={totpCode}
+          setTotpCode={setTotpCode}
+          recoveryCodeInput={recoveryCodeInput}
+          setRecoveryCodeInput={setRecoveryCodeInput}
+          handleAuth={handleAuth}
+          handleMfa={handleMfa}
+          handleOAuth={handleOAuth}
+          handleOAuthComplete={handleOAuthComplete}
+          handleForgot={handleForgot}
+          handleReset={handleReset}
+          setView={setView}
+        />
       )}
 
       {view === 'dashboard' && session && (
@@ -756,6 +825,9 @@ function App() {
           environments={environments}
           selectedEnvironmentId={selectedEnvironmentId}
           setSelectedEnvironmentId={setSelectedEnvironmentId}
+          folders={folders}
+          selectedFolderId={selectedFolderId}
+          setSelectedFolderId={setSelectedFolderId}
           onLogout={handleLogout}
         >
           {activeTab === 'secrets' && (
@@ -779,6 +851,7 @@ function App() {
               onSetSecret={handleSetSecret}
               onDeleteSecret={handleDeleteSecret}
               onStartEdit={handleStartEdit}
+              onViewHistory={setHistoryKey}
               onCancelEdit={handleCancelEdit}
               onOpenImport={() => setImportOpen(true)}
               newOrgName={newOrgName}
@@ -797,6 +870,18 @@ function App() {
               setNewEnvSlug={setNewEnvSlug}
               onCreateEnvironment={handleCreateEnvironment}
               hasProjectKey={hasProjectKey}
+              folders={folders}
+              selectedFolderId={selectedFolderId}
+              setSelectedFolderId={setSelectedFolderId}
+              newFolderName={newFolderName}
+              setNewFolderName={setNewFolderName}
+              onCreateFolder={handleCreateFolder}
+              onDeleteFolder={handleDeleteFolder}
+              imports={imports}
+              importSourceEnvId={importSourceEnvId}
+              setImportSourceEnvId={setImportSourceEnvId}
+              onCreateImport={handleCreateImport}
+              onDeleteImport={handleDeleteImport}
             />
           )}
           {activeTab === 'members' && (
@@ -808,6 +893,15 @@ function App() {
               setInviteRole={setInviteRole}
               onInvite={handleInvite}
             />
+          )}
+          {activeTab === 'audit' && (
+            <AuditLogTab
+              projectId={selectedProjectId}
+              onError={(m) => showToast(m, 'error')}
+            />
+          )}
+          {activeTab === 'tokens' && (
+            <AccessTokensTab onError={(m) => showToast(m, 'error')} />
           )}
           {activeTab === 'settings' && (
             <SettingsTab
@@ -838,6 +932,20 @@ function App() {
             setImportContent('');
           }}
           importing={importing}
+        />
+      )}
+
+      {historyKey && (
+        <SecretHistoryModal
+          projectId={selectedProjectId}
+          environmentId={selectedEnvironmentId}
+          secretKey={historyKey}
+          onClose={() => setHistoryKey('')}
+          onRestored={() => {
+            void refreshSecrets();
+            showToast('version restored', 'success');
+          }}
+          onError={(m) => showToast(m, 'error')}
         />
       )}
 

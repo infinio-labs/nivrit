@@ -5,8 +5,10 @@ import {
   decapsulateProjectKey,
   encapsulateProjectKey,
   encryptValue,
+  generateRegistrationMaterial,
   generateUserKeypair,
   initCrypto,
+  resetPasswordMaterial,
 } from './crypto';
 
 describe('WASM crypto', () => {
@@ -39,6 +41,92 @@ describe('WASM crypto', () => {
       decryptPrivateKey(kp.encrypted_private_key, kp.private_key_nonce, 'wrong password')
     ).rejects.toThrow();
   });
+});
+
+describe('password reset', () => {
+  // Registration + reset + two decrypts is four Argon2id runs in WASM -
+  // slower than the default 5s test timeout allows.
+  test(
+    're-wraps the same private key under the new password',
+    async () => {
+      const email = 'reset-test@example.com';
+      const reg = await generateRegistrationMaterial('old password', email);
+      const originalPrivateKey = await decryptPrivateKey(
+        reg.encrypted_private_key,
+        reg.private_key_nonce,
+        'old password'
+      );
+
+      const reset = await resetPasswordMaterial(
+        reg.encrypted_private_key_recovery,
+        reg.private_key_recovery_nonce,
+        reg.recovery_code,
+        email,
+        'new password'
+      );
+
+      const recoveredPrivateKey = await decryptPrivateKey(
+        reset.encrypted_private_key,
+        reset.private_key_nonce,
+        'new password'
+      );
+      expect(recoveredPrivateKey).toBe(originalPrivateKey);
+    },
+    20000
+  );
+
+  // Chains three password resets, each running Argon2id in WASM - slower than
+  // the default 5s test timeout allows.
+  test(
+    'mints a fresh recovery code and retires the old one',
+    async () => {
+      const email = 'reset-test-2@example.com';
+      const reg = await generateRegistrationMaterial('old password', email);
+
+      const reset = await resetPasswordMaterial(
+        reg.encrypted_private_key_recovery,
+        reg.private_key_recovery_nonce,
+        reg.recovery_code,
+        email,
+        'new password'
+      );
+      expect(reset.recovery_code).not.toBe(reg.recovery_code);
+      expect(reset.encrypted_private_key_recovery).not.toBe(reg.encrypted_private_key_recovery);
+
+      // The new recovery blob must actually work with the new code - chain a
+      // second reset through it as the check.
+      const secondReset = await resetPasswordMaterial(
+        reset.encrypted_private_key_recovery,
+        reset.private_key_recovery_nonce,
+        reset.recovery_code,
+        email,
+        'third password'
+      );
+      const originalPrivateKey = await decryptPrivateKey(
+        reg.encrypted_private_key,
+        reg.private_key_nonce,
+        'old password'
+      );
+      const finalPrivateKey = await decryptPrivateKey(
+        secondReset.encrypted_private_key,
+        secondReset.private_key_nonce,
+        'third password'
+      );
+      expect(finalPrivateKey).toBe(originalPrivateKey);
+
+      // The old recovery code must not unlock the new blob.
+      await expect(
+        resetPasswordMaterial(
+          reset.encrypted_private_key_recovery,
+          reset.private_key_recovery_nonce,
+          reg.recovery_code,
+          email,
+          'nope'
+        )
+      ).rejects.toThrow();
+    },
+    20000
+  );
 });
 
 describe('hybrid key encapsulation', () => {

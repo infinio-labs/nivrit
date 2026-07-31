@@ -34,6 +34,15 @@ impl LoginRateLimiter {
         Ok(!blocked)
     }
 
+    /// Count an attempt that has no pass/fail outcome.
+    ///
+    /// Used by endpoints that are expensive regardless of the result — an
+    /// unauthenticated registration still costs two Argon2id hashes whether or
+    /// not it succeeds, so the cost, not the failure, is what must be capped.
+    pub async fn record_attempt(&self, key: &str) -> Result<()> {
+        self.record_failure(key).await
+    }
+
     /// Record a failed attempt for `key`.
     pub async fn record_failure(&self, key: &str) -> Result<()> {
         // Opportunistically prune stale rows so a flood of distinct keys can't

@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+# Server- and tooling-side crate: distributed as a binary or a container,
+# never as a library on crates.io. Saying so here means `cargo publish` in
+# the release workflow cannot push it there by accident.
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -33,3 +37,10 @@ features = ["console"]
 
 [dev-dependencies]
 wasm-bindgen-test = "=0.3.75"
+
+# rustc emits bulk-memory instructions by default for wasm32, but the wasm-opt
+# that wasm-pack vendors predates them and rejects the module. Enabling the
+# proposal explicitly keeps size optimization on instead of turning wasm-opt off
+# (every browser Nivrit supports has shipped bulk-memory since 2020).
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]

@@ -1,4 +1,4 @@
-import { FileUp, X } from 'lucide-react';
+import { FileUp, X } from './icons';
 import { Button, Card, Textarea } from './ui';
 
 export function ImportEnvModal({

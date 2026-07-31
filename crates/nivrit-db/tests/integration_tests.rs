@@ -86,6 +86,67 @@ async fn user_lifecycle() {
 }
 
 #[tokio::test]
+async fn password_reset_rotates_recovery_credential_too() {
+    let pool = setup_pool().await;
+    let email = format!("reset-{}@example.com", Uuid::new_v4());
+
+    let created = queries::create_user_with_recovery(
+        &pool,
+        &email,
+        None,
+        Some("old-password-hash"),
+        b"pk",
+        b"epk",
+        b"nonce",
+        "aes256gcm-v1",
+        Some("old-recovery-hash"),
+        Some(b"old-epk-recovery"),
+        Some(b"old-recovery-nonce"),
+        Some("aes256gcm-v1"),
+        None,
+    )
+    .await
+    .expect("create_user_with_recovery failed");
+
+    queries::update_user_password_and_keys(
+        &pool,
+        created.id,
+        "new-password-hash",
+        b"new-epk",
+        b"new-nonce",
+        "aes256gcm-v1",
+        "new-recovery-hash",
+        b"new-epk-recovery",
+        b"new-recovery-nonce",
+        "aes256gcm-v1",
+    )
+    .await
+    .expect("update_user_password_and_keys failed");
+
+    let fetched = queries::get_user_by_email(&pool, &email)
+        .await
+        .expect("get_user_by_email failed");
+
+    assert_eq!(fetched.password_hash.as_deref(), Some("new-password-hash"));
+    assert_eq!(fetched.encrypted_private_key, b"new-epk");
+    // The old recovery code must no longer be the one on file - otherwise a
+    // reset (often needed because that code may be compromised) would leave
+    // it valid forever.
+    assert_eq!(
+        fetched.recovery_code_hash.as_deref(),
+        Some("new-recovery-hash")
+    );
+    assert_ne!(
+        fetched.recovery_code_hash.as_deref(),
+        Some("old-recovery-hash")
+    );
+    assert_eq!(
+        fetched.encrypted_private_key_recovery.as_deref(),
+        Some(b"new-epk-recovery".as_slice())
+    );
+}
+
+#[tokio::test]
 async fn duplicate_user_email_is_conflict() {
     let pool = setup_pool().await;
     let email = format!("dup-{}@example.com", Uuid::new_v4());
@@ -169,7 +230,7 @@ async fn project_membership_and_secret_crud() {
         .expect("get_secret failed");
     assert_eq!(fetched.id, secret.id);
 
-    let list = queries::list_secrets(&pool, project_id, Some(env_id), None)
+    let list = queries::list_secrets(&pool, project_id, Some(env_id), None, 100, 0)
         .await
         .expect("list_secrets failed");
     assert_eq!(list.len(), 1);

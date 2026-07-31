@@ -7,6 +7,8 @@ use nivrit_core::NivritError;
 use nivrit_db::queries;
 use serde::{Deserialize, Serialize};
 
+use uuid::Uuid;
+
 use crate::{
     auth::CurrentUser,
     error::ApiError,
@@ -20,6 +22,11 @@ type ApiResult<T> = std::result::Result<T, ApiError>;
 #[derive(Debug, Deserialize)]
 pub struct PublicKeyQuery {
     pub email: String,
+    /// The project this lookup is for. Scopes the endpoint to "inviting
+    /// someone I have the right to invite" instead of "any authenticated user
+    /// can resolve any email to an account", which is otherwise a free
+    /// enumeration oracle over the whole user table.
+    pub project_id: Uuid,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,15 +45,23 @@ pub struct MyProjectResponse {
     pub project_key_algorithm: String,
 }
 
-/// Look up a user's public key by email.
+/// Look up a user's public key by email, for inviting them to a project.
+///
+/// Requires Member+ in `project_id` - the same bar `invite_member` itself
+/// enforces - so this cannot be used as a bare "does this email exist"
+/// lookup by an arbitrary authenticated account with no relationship to
+/// either the caller or the project the lookup is supposedly for.
 pub async fn get_public_key(
     State(state): State<AppState>,
-    CurrentUser(_user): CurrentUser,
+    CurrentUser(user): CurrentUser,
     Query(query): Query<PublicKeyQuery>,
 ) -> ApiResult<Json<PublicKeyResponse>> {
     if query.email.is_empty() {
         return Err(NivritError::Validation("email required".into()).into());
     }
+
+    let membership = require_project_member(&state.db, query.project_id, user.id).await?;
+    require_role(&membership, Role::Member)?;
 
     let row = queries::get_user_public_key_by_email(&state.db, &query.email).await?;
 
@@ -136,6 +151,17 @@ pub struct RotateKeyRequest {
     pub private_key_nonce: String,
     #[serde(default = "default_private_key_algorithm")]
     pub private_key_algorithm: String,
+    /// The private key re-wrapped under the (unchanged) recovery key. Required:
+    /// rotation changes the private key, so a stale recovery blob would restore
+    /// the old one at reset time.
+    pub encrypted_private_key_recovery: String,
+    pub private_key_recovery_nonce: String,
+    #[serde(default = "default_private_key_algorithm")]
+    pub private_key_recovery_algorithm: String,
+    /// Credential for the newly issued recovery code. Rotation replaces the
+    /// recovery code along with the key pair, since the old code wraps a
+    /// private key that no longer exists.
+    pub recovery_auth_hash: String,
     /// Re-encrypted project keys for each membership the user wants to rotate.
     pub project_keys: Vec<RotatedProjectKey>,
 }
@@ -173,38 +199,77 @@ pub async fn rotate_key(
     let private_key_nonce = STANDARD
         .decode(&req.private_key_nonce)
         .map_err(|e| NivritError::Validation(format!("invalid private_key_nonce: {}", e)))?;
+    let encrypted_private_key_recovery = STANDARD
+        .decode(&req.encrypted_private_key_recovery)
+        .map_err(|e| {
+            NivritError::Validation(format!("invalid encrypted_private_key_recovery: {}", e))
+        })?;
+    let private_key_recovery_nonce =
+        STANDARD
+            .decode(&req.private_key_recovery_nonce)
+            .map_err(|e| {
+                NivritError::Validation(format!("invalid private_key_recovery_nonce: {}", e))
+            })?;
 
-    queries::update_user_keys(
+    let recovery_auth_hash = STANDARD
+        .decode(&req.recovery_auth_hash)
+        .map_err(|e| NivritError::Validation(format!("invalid recovery_auth_hash: {}", e)))?;
+    if recovery_auth_hash.len() != 32 {
+        return Err(NivritError::Validation("recovery_auth_hash must be 32 bytes".into()).into());
+    }
+    let recovery_code_hash = state
+        .credentials
+        .hash(&STANDARD.encode(&recovery_auth_hash));
+
+    // Decode everything before touching the database so a malformed entry
+    // cannot abort the transaction halfway.
+    let decoded: Vec<(Uuid, Vec<u8>, Vec<u8>, String)> = req
+        .project_keys
+        .iter()
+        .map(|key| {
+            let encrypted = STANDARD.decode(&key.encrypted_project_key).map_err(|e| {
+                NivritError::Validation(format!("invalid encrypted_project_key: {}", e))
+            })?;
+            let nonce = STANDARD.decode(&key.project_key_nonce).map_err(|e| {
+                NivritError::Validation(format!("invalid project_key_nonce: {}", e))
+            })?;
+            Ok((
+                key.project_id,
+                encrypted,
+                nonce,
+                key.project_key_algorithm.clone(),
+            ))
+        })
+        .collect::<Result<Vec<_>, NivritError>>()?;
+
+    let project_keys: Vec<queries::RotatedProjectKey<'_>> = decoded
+        .iter()
+        .map(
+            |(project_id, encrypted, nonce, algorithm)| queries::RotatedProjectKey {
+                project_id: *project_id,
+                encrypted_project_key: encrypted,
+                project_key_nonce: nonce,
+                project_key_algorithm: algorithm,
+            },
+        )
+        .collect();
+
+    queries::rotate_user_keys(
         &state.db,
         user.id,
-        &public_key,
-        &encrypted_private_key,
-        &private_key_nonce,
-        &req.private_key_algorithm,
+        &queries::UserKeyRotation {
+            public_key: &public_key,
+            encrypted_private_key: &encrypted_private_key,
+            private_key_nonce: &private_key_nonce,
+            private_key_algorithm: &req.private_key_algorithm,
+            encrypted_private_key_recovery: &encrypted_private_key_recovery,
+            private_key_recovery_nonce: &private_key_recovery_nonce,
+            private_key_recovery_algorithm: &req.private_key_recovery_algorithm,
+            recovery_code_hash: &recovery_code_hash,
+        },
+        &project_keys,
     )
     .await?;
-
-    for key in req.project_keys {
-        let membership = require_project_member(&state.db, key.project_id, user.id).await?;
-        require_role(&membership, Role::Member)?;
-
-        let encrypted_project_key = STANDARD.decode(&key.encrypted_project_key).map_err(|e| {
-            NivritError::Validation(format!("invalid encrypted_project_key: {}", e))
-        })?;
-        let project_key_nonce = STANDARD
-            .decode(&key.project_key_nonce)
-            .map_err(|e| NivritError::Validation(format!("invalid project_key_nonce: {}", e)))?;
-
-        queries::update_project_member_key(
-            &state.db,
-            key.project_id,
-            user.id,
-            &encrypted_project_key,
-            &project_key_nonce,
-            &key.project_key_algorithm,
-        )
-        .await?;
-    }
 
     Ok(Json(serde_json::json!({"rotated": true})))
 }

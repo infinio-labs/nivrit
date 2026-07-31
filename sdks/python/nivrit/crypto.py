@@ -50,6 +50,19 @@ class HelperCrypto:
     def generate_keypair(self, password: str) -> dict[str, str]:
         return self._call({"op": "generate_keypair", "password": password})
 
+    def generate_registration_material(self, password: str, email: str) -> dict[str, str]:
+        """Everything registration needs, computed locally: keypair, recovery
+        material, and the auth_hash the server accepts in place of the password."""
+        return self._call(
+            {"op": "generate_registration_material", "password": password, "email": email}
+        )
+
+    def derive_auth_hash(self, password: str, email: str) -> str:
+        """The opaque credential the server accepts in place of the password."""
+        return self._call(
+            {"op": "derive_auth_hash", "password": password, "email": email}
+        )["auth_hash"]
+
     def decrypt_private_key(
         self, encrypted_private_key: str, nonce: str, password: str
     ) -> str:

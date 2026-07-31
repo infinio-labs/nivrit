@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import {
+  KeyRound,
+  ScrollText,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -7,13 +9,13 @@ import {
   Shield,
   Users,
   X,
-} from 'lucide-react';
+} from './icons';
 import { Logo } from './Logo';
 import { Button, Separator } from './ui';
 import { ContextSelect } from './ContextSelect';
 import type { Session } from '../session';
 
-type Tab = 'secrets' | 'members' | 'settings';
+type Tab = 'secrets' | 'members' | 'audit' | 'tokens' | 'settings';
 
 interface DashboardProps {
   session: Session;
@@ -28,6 +30,9 @@ interface DashboardProps {
   environments: { id: string; project_id: string; name: string; slug: string }[];
   selectedEnvironmentId: string;
   setSelectedEnvironmentId: (id: string) => void;
+  folders: { id: string; name: string; path: string }[];
+  selectedFolderId: string;
+  setSelectedFolderId: (id: string) => void;
   onLogout: () => void;
   children: ReactNode;
 }
@@ -35,6 +40,8 @@ interface DashboardProps {
 const navItems: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'secrets', label: 'Secrets', icon: LayoutDashboard },
   { id: 'members', label: 'Members', icon: Users },
+  { id: 'audit', label: 'Audit log', icon: ScrollText },
+  { id: 'tokens', label: 'Access tokens', icon: KeyRound },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -167,6 +174,18 @@ export function Dashboard(props: DashboardProps) {
                 placeholder="Select environment"
                 disabled={!props.selectedProjectId}
                 testId="env-select"
+              />
+              {/* Secrets are scoped to a folder. Without this the UI only ever
+                  queried the root, so anything filed into a folder from the CLI
+                  was invisible here. */}
+              <ContextSelect
+                label="Folder"
+                value={props.selectedFolderId}
+                onChange={props.setSelectedFolderId}
+                options={props.folders.map((f) => ({ value: f.id, label: f.name }))}
+                placeholder="Root folder"
+                disabled={!props.selectedEnvironmentId}
+                testId="folder-select"
               />
             </div>
 

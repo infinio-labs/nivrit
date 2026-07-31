@@ -1,3 +1,7 @@
+use aes_gcm::{
+    aead::{Aead, KeyInit, Nonce},
+    Aes256Gcm,
+};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use nivrit_core::{NivritError, Result};
 use totp_rs::{Algorithm, Secret, TOTP};
@@ -73,13 +77,31 @@ pub fn verify_code(secret: &str, code: &str) -> bool {
     totp.check(code, 1)
 }
 
-/// Simple at-rest encryption for the TOTP secret using a server-side AES key.
+/// At-rest encryption for the TOTP secret using a server-side AES key.
+///
+/// Unlike the rest of Nivrit's key material, the TOTP secret genuinely must be
+/// server-readable — the server is the party that verifies the code — so this is
+/// server-side encryption under `NIVRIT_TOTP_ENCRYPTION_KEY`, not E2EE.
+///
+/// Returns `(ciphertext, nonce)`.
 pub fn encrypt_secret(secret: &str, server_key: &[u8; 32]) -> Result<(Vec<u8>, Vec<u8>)> {
-    super::recovery::encrypt_with_key(secret.as_bytes(), server_key)
+    let cipher =
+        Aes256Gcm::new_from_slice(server_key).expect("AES-256 key length is fixed at 32 bytes");
+    let nonce = Nonce::<Aes256Gcm>::from(nivrit_crypto::random_bytes::<12>());
+    let ciphertext = cipher
+        .encrypt(&nonce, secret.as_bytes())
+        .map_err(|e| NivritError::Crypto(e.to_string()))?;
+    Ok((ciphertext, nonce.to_vec()))
 }
 
 pub fn decrypt_secret(ciphertext: &[u8], nonce: &[u8], server_key: &[u8; 32]) -> Result<String> {
-    let plain = super::recovery::decrypt_with_key(ciphertext, nonce, server_key)?;
+    let cipher =
+        Aes256Gcm::new_from_slice(server_key).expect("AES-256 key length is fixed at 32 bytes");
+    let nonce = Nonce::<Aes256Gcm>::try_from(nonce)
+        .map_err(|_| NivritError::Crypto("invalid AES-GCM nonce length".into()))?;
+    let plain = cipher
+        .decrypt(&nonce, ciphertext)
+        .map_err(|e| NivritError::Crypto(e.to_string()))?;
     String::from_utf8(plain).map_err(|e| NivritError::Internal(e.to_string()))
 }
 

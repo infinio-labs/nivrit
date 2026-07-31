@@ -8,6 +8,12 @@ export default defineConfig({
   build: {
     target: 'esnext',
   },
+  // The crypto worker's wasm import uses top-level await, which the default
+  // iife worker format can't emit.
+  worker: {
+    format: 'es',
+    plugins: () => [wasm()],
+  },
   server: {
     port: 3000,
     proxy: {

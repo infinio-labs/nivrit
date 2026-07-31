@@ -17,6 +17,12 @@ graphify-out/
 # IDE
 .idea
 .vscode
+
+# Coding-agent scratch directories
+.claude/
+.codex/
+.agents/
+.fallow/
 *.swp
 *.swo
 *~

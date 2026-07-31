@@ -1,5 +1,5 @@
 import { QRCodeSVG } from 'qrcode.react';
-import { KeyRound, Lock, Shield } from 'lucide-react';
+import { KeyRound, Lock, Shield } from './icons';
 import { Badge, Button, Card, CardHeader, Input, Label } from './ui';
 
 interface SettingsTabProps {

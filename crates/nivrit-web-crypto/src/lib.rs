@@ -59,6 +59,195 @@ pub fn generate_user_keypair(password: &str) -> Result<JsValue, JsValue> {
     })?)
 }
 
+/// Everything a client needs to register an account, computed locally.
+///
+/// The plaintext private key and the master password never appear in this
+/// struct, so they never cross the WASM boundary into JavaScript and never
+/// reach the network. The server receives only `auth_hash` (an opaque
+/// credential) and ciphertext.
+#[derive(Serialize, Deserialize)]
+pub struct RegistrationMaterial {
+    pub public_key: String,
+    pub encrypted_private_key: String,
+    pub private_key_nonce: String,
+    pub private_key_algorithm: String,
+    /// Sent to the server in place of the password.
+    pub auth_hash: String,
+    /// Shown to the user exactly once. Never sent to the server.
+    pub recovery_code: String,
+    /// Sent to the server so it can verify a future recovery attempt.
+    pub recovery_auth_hash: String,
+    pub encrypted_private_key_recovery: String,
+    pub private_key_recovery_nonce: String,
+    pub private_key_recovery_algorithm: String,
+}
+
+/// Generate a hybrid keypair and every derived value registration needs.
+///
+/// Replaces the old flow where the server decrypted the user's private key in
+/// order to build the recovery blob. All of that now happens here, on the
+/// client, so the server never holds the plaintext private key or the password.
+#[wasm_bindgen]
+pub fn generate_registration_material(password: &str, email: &str) -> Result<JsValue, JsValue> {
+    let keypair = HybridUserKeyPair::generate();
+    let private_key_plaintext = keypair.serialize_private_key();
+
+    // Password-wrapped copy: [salt:16][ciphertext], nonce stored separately.
+    let salt = nivrit_crypto::random_bytes::<16>();
+    let key = argon2_derive_key(password.as_bytes(), &salt);
+    let encrypted = crypto_encrypt_value(&private_key_plaintext, &key)
+        .map_err(|e| err(format!("failed to encrypt private key: {e}")))?;
+    let mut combined = salt.to_vec();
+    combined.extend_from_slice(&encrypted.ciphertext);
+
+    // Recovery-wrapped copy of the same private key.
+    let recovery_code = nivrit_crypto::recovery::generate_recovery_code();
+    let recovery_key = nivrit_crypto::recovery::derive_recovery_key(&recovery_code, email);
+    let (recovery_ciphertext, recovery_nonce) =
+        nivrit_crypto::recovery::encrypt_private_key_for_recovery(
+            &private_key_plaintext,
+            &recovery_key,
+        )
+        .map_err(|e| err(format!("failed to encrypt recovery key: {e}")))?;
+
+    let auth_hash = nivrit_crypto::derive_auth_hash(password.as_bytes(), email);
+    let recovery_auth_hash = nivrit_crypto::derive_recovery_auth_hash(&recovery_code, email);
+
+    Ok(serde_wasm_bindgen::to_value(&RegistrationMaterial {
+        public_key: b64_encode(&keypair.serialize_public_key()),
+        encrypted_private_key: b64_encode(&combined),
+        private_key_nonce: b64_encode(&encrypted.nonce),
+        private_key_algorithm: "aes256gcm-v1".into(),
+        auth_hash: b64_encode(&*auth_hash),
+        recovery_code,
+        recovery_auth_hash: b64_encode(&*recovery_auth_hash),
+        encrypted_private_key_recovery: b64_encode(&recovery_ciphertext),
+        private_key_recovery_nonce: b64_encode(&recovery_nonce),
+        private_key_recovery_algorithm: "aes256gcm-v1".into(),
+    })?)
+}
+
+/// Result of assessing a candidate master password.
+#[derive(Serialize, Deserialize)]
+pub struct PasswordAssessment {
+    pub acceptable: bool,
+    pub strength: String,
+    pub message: Option<String>,
+}
+
+/// Assess a master password against Nivrit's policy.
+///
+/// Shares one implementation with the CLI (`nivrit_crypto::password_policy`) so
+/// that a password accepted when registering in the browser is also accepted
+/// when changing it from the command line. The server cannot perform this check
+/// at all — it only ever sees a derived hash.
+#[wasm_bindgen]
+pub fn assess_password(password: &str, email: Option<String>) -> Result<JsValue, JsValue> {
+    let assessment = nivrit_crypto::password_policy::assess_password(password, email.as_deref());
+    Ok(serde_wasm_bindgen::to_value(&PasswordAssessment {
+        acceptable: assessment.acceptable,
+        strength: assessment.strength.as_str().to_string(),
+        message: assessment.message,
+    })?)
+}
+
+/// Derive the opaque credential the server accepts in place of the password.
+#[wasm_bindgen]
+pub fn derive_auth_hash(password: &str, email: &str) -> String {
+    b64_encode(&*nivrit_crypto::derive_auth_hash(
+        password.as_bytes(),
+        email,
+    ))
+}
+
+/// Derive the opaque credential that proves possession of a recovery code.
+#[wasm_bindgen]
+pub fn derive_recovery_auth_hash(recovery_code: &str, email: &str) -> String {
+    b64_encode(&*nivrit_crypto::derive_recovery_auth_hash(
+        recovery_code,
+        email,
+    ))
+}
+
+/// Result of a password reset computed entirely on the client.
+#[derive(Serialize, Deserialize)]
+pub struct ResetMaterial {
+    pub auth_hash: String,
+    pub encrypted_private_key: String,
+    pub private_key_nonce: String,
+    pub private_key_algorithm: String,
+    /// Shown to the user exactly once. Never sent to the server.
+    pub recovery_code: String,
+    /// Sent to the server so it can verify a future recovery attempt.
+    pub recovery_auth_hash: String,
+    pub encrypted_private_key_recovery: String,
+    pub private_key_recovery_nonce: String,
+    pub private_key_recovery_algorithm: String,
+}
+
+/// Recover the private key from a recovery blob, re-wrap it under a new
+/// password, *and* mint a fresh recovery code to replace the one just used.
+///
+/// A reset is often needed because the old recovery code may itself be
+/// compromised - that is frequently the reason a reset is happening at all -
+/// so leaving it valid afterward would defeat the point. This mirrors what
+/// `generate_registration_material` does at signup and what `rotate_key` does
+/// on key rotation: the recovery code, the old private key, and both passwords
+/// stay on the client; the server receives only opaque credentials and
+/// ciphertext.
+#[wasm_bindgen]
+pub fn reset_password_material(
+    encrypted_private_key_recovery_b64: &str,
+    private_key_recovery_nonce_b64: &str,
+    recovery_code: &str,
+    email: &str,
+    new_password: &str,
+) -> Result<JsValue, JsValue> {
+    let ciphertext = b64_decode(encrypted_private_key_recovery_b64)?;
+    let nonce = b64_decode(private_key_recovery_nonce_b64)?;
+
+    let recovery_key = nivrit_crypto::recovery::derive_recovery_key(recovery_code, email);
+    let private_key_plaintext = nivrit_crypto::recovery::decrypt_private_key_from_recovery(
+        &ciphertext,
+        &nonce,
+        &recovery_key,
+    )
+    .map_err(|_| err("recovery code did not decrypt the private key".into()))?;
+
+    let salt = nivrit_crypto::random_bytes::<16>();
+    let key = argon2_derive_key(new_password.as_bytes(), &salt);
+    let encrypted = crypto_encrypt_value(&private_key_plaintext, &key)
+        .map_err(|e| err(format!("failed to re-encrypt private key: {e}")))?;
+    let mut combined = salt.to_vec();
+    combined.extend_from_slice(&encrypted.ciphertext);
+
+    let new_recovery_code = nivrit_crypto::recovery::generate_recovery_code();
+    let new_recovery_key = nivrit_crypto::recovery::derive_recovery_key(&new_recovery_code, email);
+    let (new_recovery_ciphertext, new_recovery_nonce) =
+        nivrit_crypto::recovery::encrypt_private_key_for_recovery(
+            &private_key_plaintext,
+            &new_recovery_key,
+        )
+        .map_err(|e| err(format!("failed to wrap new recovery key: {e}")))?;
+    let new_recovery_auth_hash =
+        nivrit_crypto::derive_recovery_auth_hash(&new_recovery_code, email);
+
+    Ok(serde_wasm_bindgen::to_value(&ResetMaterial {
+        auth_hash: b64_encode(&*nivrit_crypto::derive_auth_hash(
+            new_password.as_bytes(),
+            email,
+        )),
+        encrypted_private_key: b64_encode(&combined),
+        private_key_nonce: b64_encode(&encrypted.nonce),
+        private_key_algorithm: "aes256gcm-v1".into(),
+        recovery_code: new_recovery_code,
+        recovery_auth_hash: b64_encode(&*new_recovery_auth_hash),
+        encrypted_private_key_recovery: b64_encode(&new_recovery_ciphertext),
+        private_key_recovery_nonce: b64_encode(&new_recovery_nonce),
+        private_key_recovery_algorithm: "aes256gcm-v1".into(),
+    })?)
+}
+
 /// Result of decrypting a user's private key.
 #[derive(Serialize, Deserialize)]
 pub struct DecryptedPrivateKey {
@@ -127,7 +316,7 @@ pub fn decapsulate_project_key(
         .map_err(|e| err(format!("decapsulation failed: {e}")))?;
 
     Ok(serde_wasm_bindgen::to_value(&DecryptedProjectKey {
-        project_key: b64_encode(&project_key),
+        project_key: b64_encode(&*project_key),
     })?)
 }
 

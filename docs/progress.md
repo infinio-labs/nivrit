@@ -2,7 +2,7 @@
 
 **Project:** Nivrit (client-side end-to-end encrypted secret manager)  
 **Path:** `/home/sid/Projects/InfinioLabs/nivrit`  
-**Last updated:** 2026-06-15
+**Last updated:** 2026-07-31
 
 This document captures the implementation progress across all roadmap phases, testing, tooling, and dependency hygiene.
 
@@ -22,11 +22,11 @@ This document captures the implementation progress across all roadmap phases, te
 | Authorization on project-scoped handlers | ✅ Done | `handlers/authz.rs` enforces membership + role checks on secrets/env/members endpoints. |
 | CLI E2EE project-key envelope | ✅ Done | `create_project` encrypts the project key to the user's own public key; `login` decrypts the private key and recovers project keys from `/users/me/projects`. |
 | Secret update + versioning | ✅ Done | `create_secret` now upserts with `ON CONFLICT ... DO UPDATE`, bumps `version`, and writes the old row into `secret_versions`. |
-| Org-membership gate on create_project | ✅ Done | `create_project` verifies the caller belongs to the target org before creating the project. |
+| Org-role gate on create_project | ✅ Done | `create_project` requires `Member`+ in the target org, not just membership, so an org `Viewer` can't create a project and become its admin. |
 | SQLx error sanitization | ✅ Done | `queries::map_db_error` maps unique violations to `Conflict` (→ 409) and returns opaque `Internal` for other DB errors. |
-| Audit logging | ✅ Done | `access_logs` table records `read`/`write`/`delete` events on secrets; `GET /projects/{id}/audit-logs` for admins. `list_secrets`, `get_secret`, `create_secret`, and `delete_secret` all write audit logs. |
+| Audit logging | ✅ Done | `access_logs` table records `read`/`write`/`delete` events on secrets; `GET /projects/{id}/audit-logs` for admins. `list_secrets`, `get_secret`, `create_secret`, and `delete_secret` all write audit logs; failures to write are logged, not silently dropped. |
 | Audit-log PQ signatures | ✅ Done | Each audit-log entry is signed with ML-DSA-65 over a canonical JSON payload. `GET /projects/{id}/audit-logs/{log_id}/verify` checks the signature. Configurable via `NIVRIT_SIGNING_KEY_SEED`. |
-| Login hardening | ✅ Done | In-memory per-account rate limiter locks out after 5 failed attempts in 15 minutes; cleared on success. |
+| Login hardening | ✅ Done | Postgres-backed rate limiter (`login_attempts` table, shared across instances) locks out after 5 failed attempts in 15 minutes; cleared on success. Same limiter also gates registration, TOTP login/verify/disable, and `forgot_password`. |
 | CORS origin restriction | ✅ Done | `NIVRIT_CORS_ORIGIN` config restricts allowed origin; defaults to `Any` with a warning when unset. |
 | Secret CRUD completeness | ✅ Done | `list_secrets`, `delete_secret`, `list_projects`, and `list_environments` endpoints; CLI and web dashboard updated. `delete_secret` returns `NotFound` when the key is absent and captures the deleted `secret_id` for the audit trail. |
 | Key rotation authorization | ✅ Done | `POST /users/me/rotate-key` verifies project membership + `Member` role for each rotated membership key before updating it. |
@@ -62,7 +62,7 @@ This document captures the implementation progress across all roadmap phases, te
 |------|--------|-------|
 | WASM crypto crate | ✅ Done | `crates/nivrit-web-crypto` compiles `nivrit-crypto` to `wasm32-unknown-unknown`. |
 | Vite WASM integration | ✅ Done | `vite-plugin-wasm` loads the `.wasm` bundle; Vite's `esnext` target preserves native top-level await. |
-| Argon2id in the browser | ✅ Done | `generate_user_keypair` / `decrypt_private_key` run Argon2id inside WASM. |
+| Argon2id in the browser | ✅ Done | `generate_user_keypair`, `decrypt_private_key`, and the other Argon2id-backed WASM calls run inside a Web Worker (`crypto.worker.ts`), off the main thread, so the tab doesn't freeze mid-derivation. |
 | Hybrid key generation in browser | ✅ Done | Web users generate `X25519 + ML-KEM-768` key pairs. |
 | Project-key sharing in browser | ✅ Done | `inviteProjectMember` encapsulates the project key to a recipient's hybrid public key. |
 | In-memory key store | ✅ Done | `session.ts` keeps the decrypted private key and project keys in memory only (no localStorage). |
