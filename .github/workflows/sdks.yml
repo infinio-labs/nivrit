@@ -68,6 +68,9 @@ jobs:
     needs: build-helper
     env:
       DATABASE_URL: postgres://nivrit:nivrit@localhost:55432/nivrit
+      # auth_secret has been a required config field since credentials moved to
+      # a keyed HMAC; the API process this job starts fails config load without it.
+      NIVRIT_AUTH_SECRET: ci-smoke-test-secret-not-for-production-use-32b
     strategy:
       fail-fast: false
       matrix:
@@ -181,6 +184,12 @@ jobs:
     name: SDK crypto parity (${{ matrix.sdk }})
     runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     needs: build-helper
+    # The self-hosted runner's user can't write the hosted-runner defaults
+    # (/opt/hostedtoolcache, /usr/share/dotnet); redirect tool installs into
+    # the always-writable per-job runner.temp instead.
+    env:
+      RUNNER_TOOL_CACHE: ${{ runner.temp }}/hostedtoolcache
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
     strategy:
       fail-fast: false
       matrix:
@@ -215,6 +224,10 @@ jobs:
       - name: Setup Elixir
         if: matrix.sdk == 'elixir'
         uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+        # erlef/setup-beam picks a precompiled OTP/Elixir build from the image
+        # OS; self-hosted runners don't set the ImageOS it normally reads.
+        env:
+          ImageOS: ubuntu24
         with:
           otp-version: '29.0.3'
           elixir-version: '1.20.2'
