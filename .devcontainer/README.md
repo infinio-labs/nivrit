@@ -25,7 +25,7 @@ Open the UI at http://localhost:3000. The API is available at http://localhost:4
 
 - Rust toolchain + `wasm-pack` + `sqlx-cli`
 - Node.js 22 + pnpm 11.9.0
-- Postgres 17 service
+- Postgres 18 service
 - Persistent volumes for:
   - `/workspace/target` (Rust build artifacts)
   - `/home/vscode/.cargo` (Cargo registry cache)
