@@ -1,6 +1,6 @@
 use nivrit_sdk::{
     b64_encode, decrypt_secret_value, encapsulate_project_key, encrypt_secret_value,
-    generate_user_keypair, NivritSession,
+    generate_registration_material, NivritSession,
 };
 use rand::Rng;
 use serde_json::json;
@@ -44,20 +44,23 @@ async fn smoke_test() {
     let email = format!("sdk-rust-{}@example.com", ts);
     let password = "Correct-Horse-Battery-Staple!";
 
-    let (public_key, encrypted_private_key, private_key_nonce) =
-        generate_user_keypair(password).unwrap();
+    let material = generate_registration_material(password, &email).unwrap();
 
     let reg = api_request(
         reqwest::Method::POST,
         "/auth/register",
         Some(json!({
             "email": email,
-            "password": password,
+            "auth_hash": material.auth_hash,
             "name": "Rust SDK Test",
-            "public_key": public_key,
-            "encrypted_private_key": encrypted_private_key,
-            "private_key_nonce": private_key_nonce,
+            "public_key": material.public_key,
+            "encrypted_private_key": material.encrypted_private_key,
+            "private_key_nonce": material.private_key_nonce,
             "private_key_algorithm": "aes256gcm-v1",
+            "recovery_auth_hash": material.recovery_auth_hash,
+            "encrypted_private_key_recovery": material.encrypted_private_key_recovery,
+            "private_key_recovery_nonce": material.private_key_recovery_nonce,
+            "private_key_recovery_algorithm": "aes256gcm-v1",
         })),
         None,
     )

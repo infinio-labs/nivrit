@@ -58,19 +58,23 @@ func TestSmoke(t *testing.T) {
 	password := "Correct-Horse-Battery-Staple!"
 
 	crypto := NewHelperCrypto("")
-	keypair, err := crypto.GenerateKeypair(password)
+	material, err := crypto.GenerateRegistrationMaterial(password, email)
 	if err != nil {
-		t.Fatalf("generate keypair: %v", err)
+		t.Fatalf("generate registration material: %v", err)
 	}
 
 	reg, err := apiRequest("POST", "/auth/register", map[string]any{
-		"email":                   email,
-		"password":                password,
-		"name":                    "Go SDK Test",
-		"public_key":              keypair["public_key"],
-		"encrypted_private_key":  keypair["encrypted_private_key"],
-		"private_key_nonce":      keypair["private_key_nonce"],
-		"private_key_algorithm": keypair["private_key_algorithm"],
+		"email":                          email,
+		"auth_hash":                      material["auth_hash"],
+		"name":                           "Go SDK Test",
+		"public_key":                     material["public_key"],
+		"encrypted_private_key":          material["encrypted_private_key"],
+		"private_key_nonce":              material["private_key_nonce"],
+		"private_key_algorithm":          material["private_key_algorithm"],
+		"recovery_auth_hash":             material["recovery_auth_hash"],
+		"encrypted_private_key_recovery": material["encrypted_private_key_recovery"],
+		"private_key_recovery_nonce":     material["private_key_recovery_nonce"],
+		"private_key_recovery_algorithm": material["private_key_recovery_algorithm"],
 	}, "")
 	if err != nil {
 		t.Fatalf("register: %v", err)
@@ -111,11 +115,11 @@ func TestSmoke(t *testing.T) {
 		t.Fatalf("encode encapsulated: %v", err)
 	}
 	projectRaw, err := session.Client.CreateProject(map[string]any{
-		"org_id":                 org["id"],
-		"name":                   "Go SDK Project",
-		"slug":                   fmt.Sprintf("go-sdk-project-%d", time.Now().Unix()),
+		"org_id":                org["id"],
+		"name":                  "Go SDK Project",
+		"slug":                  fmt.Sprintf("go-sdk-project-%d", time.Now().Unix()),
 		"encrypted_project_key": encryptedProjectKey,
-		"project_key_nonce":      base64.StdEncoding.EncodeToString(make([]byte, 12)),
+		"project_key_nonce":     base64.StdEncoding.EncodeToString(make([]byte, 12)),
 		"project_key_algorithm": "hybrid_x25519_ml_kem_768_aes256gcm_v1",
 	})
 	if err != nil {
@@ -139,11 +143,11 @@ func TestSmoke(t *testing.T) {
 		t.Fatalf("encrypt value: %v", err)
 	}
 	_, err = session.Client.CreateSecret(project["id"].(string), map[string]any{
-		"environment_id": env["id"],
-		"key":            "GREETING",
+		"environment_id":  env["id"],
+		"key":             "GREETING",
 		"encrypted_value": encrypted["ciphertext"],
-		"nonce":          encrypted["nonce"],
-		"algorithm":      "aes256gcm-v1",
+		"nonce":           encrypted["nonce"],
+		"algorithm":       "aes256gcm-v1",
 	})
 	if err != nil {
 		t.Fatalf("create secret: %v", err)

@@ -27,19 +27,23 @@ def api_request(method: str, path: str, body: dict | None = None, token: str | N
 
 async def main():
     crypto = HelperCrypto()
-    keypair = crypto.generate_keypair(PASSWORD)
+    material = crypto.generate_registration_material(PASSWORD, EMAIL)
 
     reg = api_request(
         "POST",
         "/auth/register",
         {
             "email": EMAIL,
-            "password": PASSWORD,
+            "auth_hash": material["auth_hash"],
             "name": "Python SDK Test",
-            "public_key": keypair["public_key"],
-            "encrypted_private_key": keypair["encrypted_private_key"],
-            "private_key_nonce": keypair["private_key_nonce"],
-            "private_key_algorithm": keypair["private_key_algorithm"],
+            "public_key": material["public_key"],
+            "encrypted_private_key": material["encrypted_private_key"],
+            "private_key_nonce": material["private_key_nonce"],
+            "private_key_algorithm": material["private_key_algorithm"],
+            "recovery_auth_hash": material["recovery_auth_hash"],
+            "encrypted_private_key_recovery": material["encrypted_private_key_recovery"],
+            "private_key_recovery_nonce": material["private_key_recovery_nonce"],
+            "private_key_recovery_algorithm": material["private_key_recovery_algorithm"],
         },
     )
     print("registered", reg["user"]["email"])

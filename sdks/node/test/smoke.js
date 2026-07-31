@@ -20,16 +20,20 @@ async function request(method, path, body, token) {
 
 async function main() {
   const helper = new HelperCrypto();
-  const keypair = helper.generateKeypair(PASSWORD);
+  const material = helper.generateRegistrationMaterial(PASSWORD, EMAIL);
 
   const reg = await request('POST', '/auth/register', {
     email: EMAIL,
-    password: PASSWORD,
+    auth_hash: material.auth_hash,
     name: 'Node SDK Test',
-    public_key: keypair.public_key,
-    encrypted_private_key: keypair.encrypted_private_key,
-    private_key_nonce: keypair.private_key_nonce,
-    private_key_algorithm: keypair.private_key_algorithm,
+    public_key: material.public_key,
+    encrypted_private_key: material.encrypted_private_key,
+    private_key_nonce: material.private_key_nonce,
+    private_key_algorithm: material.private_key_algorithm,
+    recovery_auth_hash: material.recovery_auth_hash,
+    encrypted_private_key_recovery: material.encrypted_private_key_recovery,
+    private_key_recovery_nonce: material.private_key_recovery_nonce,
+    private_key_recovery_algorithm: material.private_key_recovery_algorithm,
   });
   console.log('registered', reg.user.email);
 

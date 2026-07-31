@@ -52,6 +52,19 @@ class HelperCrypto {
     return this.call({ op: 'generate_keypair', password });
   }
 
+  /**
+   * Everything registration needs, computed locally: keypair, recovery
+   * material, and the auth_hash the server accepts in place of the password.
+   */
+  generateRegistrationMaterial(password, email) {
+    return this.call({ op: 'generate_registration_material', password, email });
+  }
+
+  /** The opaque credential the server accepts in place of the password. */
+  deriveAuthHash(password, email) {
+    return this.call({ op: 'derive_auth_hash', password, email }).auth_hash;
+  }
+
   decryptPrivateKey(encryptedPrivateKey, nonce, password) {
     return this.call({
       op: 'decrypt_private_key',
