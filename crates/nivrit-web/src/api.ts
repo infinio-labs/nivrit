@@ -145,6 +145,10 @@ export interface ResetPasswordRequest {
   encrypted_private_key: string;
   private_key_nonce: string;
   private_key_algorithm: string;
+  new_recovery_auth_hash: string;
+  new_encrypted_private_key_recovery: string;
+  new_private_key_recovery_nonce: string;
+  new_private_key_recovery_algorithm: string;
 }
 
 /// Step 2: upload the private key re-wrapped under the new password.
@@ -364,10 +368,15 @@ export interface PublicKeyResponse {
   public_key: string;
 }
 
-export async function getPublicKey(token: string, email: string): Promise<PublicKeyResponse> {
-  const res = await fetch(`${API_URL}/users/public-key?email=${encodeURIComponent(email)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+export async function getPublicKey(
+  token: string,
+  email: string,
+  projectId: string
+): Promise<PublicKeyResponse> {
+  const res = await fetch(
+    `${API_URL}/users/public-key?email=${encodeURIComponent(email)}&project_id=${encodeURIComponent(projectId)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
   if (!res.ok) throw new Error('failed to fetch public key');
   return res.json();
 }

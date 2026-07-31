@@ -9,13 +9,24 @@ use serde::{Deserialize, Serialize};
 
 use uuid::Uuid;
 
-use crate::{auth::CurrentUser, error::ApiError, state::AppState};
+use crate::{
+    auth::CurrentUser,
+    error::ApiError,
+    handlers::authz::{require_project_member, require_role},
+    state::AppState,
+};
+use nivrit_core::Role;
 
 type ApiResult<T> = std::result::Result<T, ApiError>;
 
 #[derive(Debug, Deserialize)]
 pub struct PublicKeyQuery {
     pub email: String,
+    /// The project this lookup is for. Scopes the endpoint to "inviting
+    /// someone I have the right to invite" instead of "any authenticated user
+    /// can resolve any email to an account", which is otherwise a free
+    /// enumeration oracle over the whole user table.
+    pub project_id: Uuid,
 }
 
 #[derive(Debug, Serialize)]
@@ -34,15 +45,23 @@ pub struct MyProjectResponse {
     pub project_key_algorithm: String,
 }
 
-/// Look up a user's public key by email.
+/// Look up a user's public key by email, for inviting them to a project.
+///
+/// Requires Member+ in `project_id` - the same bar `invite_member` itself
+/// enforces - so this cannot be used as a bare "does this email exist"
+/// lookup by an arbitrary authenticated account with no relationship to
+/// either the caller or the project the lookup is supposedly for.
 pub async fn get_public_key(
     State(state): State<AppState>,
-    CurrentUser(_user): CurrentUser,
+    CurrentUser(user): CurrentUser,
     Query(query): Query<PublicKeyQuery>,
 ) -> ApiResult<Json<PublicKeyResponse>> {
     if query.email.is_empty() {
         return Err(NivritError::Validation("email required".into()).into());
     }
+
+    let membership = require_project_member(&state.db, query.project_id, user.id).await?;
+    require_role(&membership, Role::Member)?;
 
     let row = queries::get_user_public_key_by_email(&state.db, &query.email).await?;
 

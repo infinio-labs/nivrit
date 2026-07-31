@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::{
     auth::CurrentUser,
     error::ApiError,
-    handlers::authz::{require_org_member, require_project_member, require_role},
+    handlers::authz::{require_org_member, require_org_role, require_project_member, require_role},
     state::AppState,
 };
 
@@ -60,8 +60,11 @@ pub async fn create_project(
         return Err(NivritError::Validation("name and slug required".into()).into());
     }
 
-    // Only org members may create projects in the org.
-    require_org_member(&state.db, req.org_id, user.id).await?;
+    // Org membership alone is not enough: it can come from being invited to a
+    // single project (as an org Viewer), not from being trusted with the org.
+    // Creating a project - and becoming its Admin - requires at least Member.
+    let org_membership = require_org_member(&state.db, req.org_id, user.id).await?;
+    require_org_role(&org_membership, Role::Member)?;
 
     let encrypted_project_key = STANDARD
         .decode(&req.encrypted_project_key)

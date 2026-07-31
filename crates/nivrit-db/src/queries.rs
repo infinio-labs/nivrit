@@ -242,6 +242,15 @@ pub async fn get_user_by_email(pool: &DbPool, email: &str) -> Result<UserRow> {
     .map_err(|_| NivritError::Unauthorized)
 }
 
+/// Reset a user's password, private-key wrapping, *and* recovery credential in
+/// one statement.
+///
+/// The recovery blob wraps the same private key the password does, so leaving
+/// it behind a reset would mean the old recovery code - which may already be
+/// compromised, since needing a reset at all is often a sign of that - stays
+/// valid forever after. Rotating it here is the reset-password analog of what
+/// `rotate_user_keys` already does for key rotation.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_user_password_and_keys(
     pool: &DbPool,
     user_id: Uuid,
@@ -249,6 +258,10 @@ pub async fn update_user_password_and_keys(
     encrypted_private_key: &[u8],
     private_key_nonce: &[u8],
     private_key_algorithm: &str,
+    recovery_code_hash: &str,
+    encrypted_private_key_recovery: &[u8],
+    private_key_recovery_nonce: &[u8],
+    private_key_recovery_algorithm: &str,
 ) -> Result<()> {
     sqlx::query!(
         r#"
@@ -257,13 +270,21 @@ pub async fn update_user_password_and_keys(
             encrypted_private_key = $2,
             private_key_nonce = $3,
             private_key_algorithm = $4,
+            recovery_code_hash = $5,
+            encrypted_private_key_recovery = $6,
+            private_key_recovery_nonce = $7,
+            private_key_recovery_algorithm = $8,
             updated_at = NOW()
-        WHERE id = $5
+        WHERE id = $9
         "#,
         password_hash,
         encrypted_private_key,
         private_key_nonce,
         private_key_algorithm,
+        recovery_code_hash,
+        encrypted_private_key_recovery,
+        private_key_recovery_nonce,
+        private_key_recovery_algorithm,
         user_id
     )
     .execute(pool.inner())

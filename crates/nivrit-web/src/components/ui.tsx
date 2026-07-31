@@ -96,22 +96,6 @@ export function Card({
   );
 }
 
-export function CardTitle({
-  children,
-  className = '',
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <h2
-      className={`text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 ${className}`}
-    >
-      {children}
-    </h2>
-  );
-}
-
 export function CardHeader({
   title,
   description,

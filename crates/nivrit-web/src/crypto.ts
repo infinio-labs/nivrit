@@ -48,6 +48,45 @@ function getWasm() {
   return wasmModule;
 }
 
+// Argon2id calls are slow enough (tens to hundreds of ms) to freeze the tab
+// mid-keystroke if run on the main thread. Offload them to a worker in real
+// browsers; in Vitest/Node there's no main thread to protect and Workers
+// don't reliably support the wasm-pack bundler output, so run inline there.
+function isTestEnv(): boolean {
+  return typeof process !== 'undefined' && process.env?.NODE_ENV === 'test';
+}
+
+type HeavyFnName = import('./crypto.worker').HeavyFnName;
+
+let worker: Worker | null = null;
+let nextRequestId = 0;
+const pendingRequests = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
+
+function getWorker(): Worker {
+  if (!worker) {
+    worker = new Worker(new URL('./crypto.worker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = (ev: MessageEvent<{ id: number; result?: unknown; error?: string }>) => {
+      const pending = pendingRequests.get(ev.data.id);
+      if (!pending) return;
+      pendingRequests.delete(ev.data.id);
+      if (ev.data.error) pending.reject(new Error(ev.data.error));
+      else pending.resolve(ev.data.result);
+    };
+  }
+  return worker;
+}
+
+function callHeavy<T>(fn: HeavyFnName, args: unknown[]): Promise<T> {
+  if (isTestEnv()) {
+    return Promise.resolve((getWasm()[fn] as (...a: unknown[]) => unknown)(...args) as T);
+  }
+  return new Promise((resolve, reject) => {
+    const id = nextRequestId++;
+    pendingRequests.set(id, { resolve: resolve as (v: unknown) => void, reject });
+    getWorker().postMessage({ id, fn, args });
+  });
+}
+
 export interface GeneratedKeypair {
   public_key: string;
   encrypted_private_key: string;
@@ -56,9 +95,7 @@ export interface GeneratedKeypair {
 }
 
 export async function generateUserKeypair(password: string): Promise<GeneratedKeypair> {
-  const wasm = getWasm();
-  const result = wasm.generate_user_keypair(password);
-  return result as unknown as GeneratedKeypair;
+  return callHeavy<GeneratedKeypair>('generate_user_keypair', [password]);
 }
 
 export async function decryptPrivateKey(
@@ -66,9 +103,12 @@ export async function decryptPrivateKey(
   nonce: string,
   password: string
 ): Promise<string> {
-  const wasm = getWasm();
-  const result = wasm.decrypt_private_key(encryptedPrivateKey, nonce, password);
-  return (result as unknown as { private_key: string }).private_key;
+  const result = await callHeavy<{ private_key: string }>('decrypt_private_key', [
+    encryptedPrivateKey,
+    nonce,
+    password,
+  ]);
+  return result.private_key;
 }
 
 export interface EncapsulatedProjectKey {
@@ -146,8 +186,7 @@ export async function generateRegistrationMaterial(
   password: string,
   email: string
 ): Promise<RegistrationMaterial> {
-  const wasm = getWasm();
-  return wasm.generate_registration_material(password, email) as unknown as RegistrationMaterial;
+  return callHeavy<RegistrationMaterial>('generate_registration_material', [password, email]);
 }
 
 export interface WasmPasswordAssessment {
@@ -169,7 +208,7 @@ export function assessPasswordWasm(password: string, email?: string): WasmPasswo
 
 /** The opaque credential the server accepts in place of the password. */
 export async function deriveAuthHash(password: string, email: string): Promise<string> {
-  return getWasm().derive_auth_hash(password, email);
+  return callHeavy<string>('derive_auth_hash', [password, email]);
 }
 
 /** The opaque credential proving possession of a recovery code. */
@@ -177,7 +216,7 @@ export async function deriveRecoveryAuthHash(
   recoveryCode: string,
   email: string
 ): Promise<string> {
-  return getWasm().derive_recovery_auth_hash(recoveryCode, email);
+  return callHeavy<string>('derive_recovery_auth_hash', [recoveryCode, email]);
 }
 
 export interface ResetMaterial {
@@ -185,12 +224,21 @@ export interface ResetMaterial {
   encrypted_private_key: string;
   private_key_nonce: string;
   private_key_algorithm: string;
+  /** Shown to the user exactly once. Never sent to the server. */
+  recovery_code: string;
+  recovery_auth_hash: string;
+  encrypted_private_key_recovery: string;
+  private_key_recovery_nonce: string;
+  private_key_recovery_algorithm: string;
 }
 
 /**
- * Unwrap the private key with the recovery code and re-wrap it under a new
- * password. Runs entirely in WASM: neither password nor the recovery code is
- * exposed to JavaScript or transmitted.
+ * Unwrap the private key with the recovery code, re-wrap it under a new
+ * password, and mint a fresh recovery code to replace the one just consumed -
+ * otherwise a reset (often needed because the old code may be compromised)
+ * would leave that same code valid forever after. Runs entirely in WASM:
+ * neither password nor either recovery code is exposed to JavaScript or
+ * transmitted.
  */
 export async function resetPasswordMaterial(
   encryptedPrivateKeyRecovery: string,
@@ -199,12 +247,11 @@ export async function resetPasswordMaterial(
   email: string,
   newPassword: string
 ): Promise<ResetMaterial> {
-  const wasm = getWasm();
-  return wasm.reset_password_material(
+  return callHeavy<ResetMaterial>('reset_password_material', [
     encryptedPrivateKeyRecovery,
     privateKeyRecoveryNonce,
     recoveryCode,
     email,
-    newPassword
-  ) as unknown as ResetMaterial;
+    newPassword,
+  ]);
 }

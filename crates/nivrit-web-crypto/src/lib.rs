@@ -176,11 +176,25 @@ pub struct ResetMaterial {
     pub encrypted_private_key: String,
     pub private_key_nonce: String,
     pub private_key_algorithm: String,
+    /// Shown to the user exactly once. Never sent to the server.
+    pub recovery_code: String,
+    /// Sent to the server so it can verify a future recovery attempt.
+    pub recovery_auth_hash: String,
+    pub encrypted_private_key_recovery: String,
+    pub private_key_recovery_nonce: String,
+    pub private_key_recovery_algorithm: String,
 }
 
-/// Recover the private key from a recovery blob and re-wrap it under a new
-/// password. The recovery code, the old private key, and both passwords stay on
-/// the client; the server receives only the new credential and new ciphertext.
+/// Recover the private key from a recovery blob, re-wrap it under a new
+/// password, *and* mint a fresh recovery code to replace the one just used.
+///
+/// A reset is often needed because the old recovery code may itself be
+/// compromised - that is frequently the reason a reset is happening at all -
+/// so leaving it valid afterward would defeat the point. This mirrors what
+/// `generate_registration_material` does at signup and what `rotate_key` does
+/// on key rotation: the recovery code, the old private key, and both passwords
+/// stay on the client; the server receives only opaque credentials and
+/// ciphertext.
 #[wasm_bindgen]
 pub fn reset_password_material(
     encrypted_private_key_recovery_b64: &str,
@@ -207,6 +221,17 @@ pub fn reset_password_material(
     let mut combined = salt.to_vec();
     combined.extend_from_slice(&encrypted.ciphertext);
 
+    let new_recovery_code = nivrit_crypto::recovery::generate_recovery_code();
+    let new_recovery_key = nivrit_crypto::recovery::derive_recovery_key(&new_recovery_code, email);
+    let (new_recovery_ciphertext, new_recovery_nonce) =
+        nivrit_crypto::recovery::encrypt_private_key_for_recovery(
+            &private_key_plaintext,
+            &new_recovery_key,
+        )
+        .map_err(|e| err(format!("failed to wrap new recovery key: {e}")))?;
+    let new_recovery_auth_hash =
+        nivrit_crypto::derive_recovery_auth_hash(&new_recovery_code, email);
+
     Ok(serde_wasm_bindgen::to_value(&ResetMaterial {
         auth_hash: b64_encode(&*nivrit_crypto::derive_auth_hash(
             new_password.as_bytes(),
@@ -215,6 +240,11 @@ pub fn reset_password_material(
         encrypted_private_key: b64_encode(&combined),
         private_key_nonce: b64_encode(&encrypted.nonce),
         private_key_algorithm: "aes256gcm-v1".into(),
+        recovery_code: new_recovery_code,
+        recovery_auth_hash: b64_encode(&*new_recovery_auth_hash),
+        encrypted_private_key_recovery: b64_encode(&new_recovery_ciphertext),
+        private_key_recovery_nonce: b64_encode(&new_recovery_nonce),
+        private_key_recovery_algorithm: "aes256gcm-v1".into(),
     })?)
 }
 

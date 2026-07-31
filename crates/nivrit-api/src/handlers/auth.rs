@@ -246,6 +246,8 @@ pub async fn login(
 
 pub async fn login_totp(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<MfaLoginRequest>,
 ) -> ApiResult<Json<AuthResponse>> {
     let claims = state
@@ -254,6 +256,19 @@ pub async fn login_totp(
         .map_err(|_| NivritError::Unauthorized)?;
     if !claims.mfa_pending {
         return Err(NivritError::Unauthorized.into());
+    }
+
+    // A 6-digit TOTP code is only ~1M possibilities. Without a lockout, holding
+    // a valid temp_token (proof the password step already passed) reduces the
+    // second factor to a guessing game. Two buckets for the same reason as
+    // `login`: per-IP stops one host grinding, per-account stops a distributed
+    // attack from rotating IPs around the account bucket.
+    let ip_key = format!("totp-login-ip|{}", client_ip(&state, &headers, &addr));
+    let user_key = format!("totp-login-user|{}", claims.sub);
+    if !state.login_rate_limiter.allow(&ip_key).await?
+        || !state.login_rate_limiter.allow(&user_key).await?
+    {
+        return Err(NivritError::Forbidden.into());
     }
 
     let row = queries::get_user_by_id(&state.db, claims.sub).await?;
@@ -274,15 +289,21 @@ pub async fn login_totp(
     let secret = nivrit_auth::totp::decrypt_secret(ciphertext, nonce, &totp_key)
         .map_err(|_| NivritError::Internal("failed to decrypt TOTP secret".into()))?;
     let Some(step) = nivrit_auth::totp::verify_code_step(&secret, &req.code) else {
+        let _ = state.login_rate_limiter.record_failure(&ip_key).await;
+        let _ = state.login_rate_limiter.record_failure(&user_key).await;
         return Err(NivritError::Unauthorized.into());
     };
     // Reject replay: a code's time step must be strictly newer than the last used.
     if let Some(last) = queries::get_totp_last_step(&state.db, row.id).await? {
         if step <= last as u64 {
+            let _ = state.login_rate_limiter.record_failure(&ip_key).await;
+            let _ = state.login_rate_limiter.record_failure(&user_key).await;
             return Err(NivritError::Unauthorized.into());
         }
     }
     queries::set_totp_last_step(&state.db, row.id, step as i64).await?;
+    let _ = state.login_rate_limiter.record_success(&ip_key).await;
+    let _ = state.login_rate_limiter.record_success(&user_key).await;
 
     let token = state.jwt.sign(row.id, row.email.clone())?;
     Ok(Json(AuthResponse {
@@ -510,8 +531,14 @@ pub struct ResetPasswordBeginResponse {
 /// key and re-wrapped it under the new password. It uploads the new credential
 /// and the new ciphertext.
 ///
-/// The recovery blob itself is unchanged by a password reset: it wraps the
-/// private key under the *recovery* key, which does not depend on the password.
+/// The client also mints a *new* recovery code and re-wraps the private key
+/// under it, uploading that alongside everything else. A reset is often
+/// triggered because the old recovery code may be compromised (that is
+/// frequently why a reset is needed at all), so leaving the old one valid
+/// would defeat the point of resetting anything. `recovery_auth_hash` proves
+/// possession of the *old* code to authorize this request; the
+/// `new_recovery_*` fields replace it, the same way `rotate_key` replaces the
+/// recovery code on key rotation.
 #[derive(Debug, Deserialize)]
 pub struct ResetPasswordRequest {
     pub token: String,
@@ -521,12 +548,35 @@ pub struct ResetPasswordRequest {
     pub private_key_nonce: String,
     #[serde(default = "default_private_key_algorithm")]
     pub private_key_algorithm: String,
+    pub new_recovery_auth_hash: String,
+    pub new_encrypted_private_key_recovery: String,
+    pub new_private_key_recovery_nonce: String,
+    #[serde(default = "default_private_key_algorithm")]
+    pub new_private_key_recovery_algorithm: String,
 }
 
 pub async fn forgot_password(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<ForgotPasswordRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    // Unauthenticated and triggers an email send, so - like register - it must
+    // be throttled or it is a free email-bombing oracle against any address and
+    // an unbounded way to grow password_reset_tokens. Rate-limited requests get
+    // the same response as everything else here: this endpoint's whole design
+    // is that its response never varies with anything an attacker controls.
+    let ip_key = format!("forgot-password-ip|{}", client_ip(&state, &headers, &addr));
+    let email_key = format!("forgot-password-email|{}", req.email.trim().to_lowercase());
+    if state.login_rate_limiter.allow(&ip_key).await?
+        && state.login_rate_limiter.allow(&email_key).await?
+    {
+        let _ = state.login_rate_limiter.record_attempt(&ip_key).await;
+        let _ = state.login_rate_limiter.record_attempt(&email_key).await;
+    } else {
+        return Ok(Json(serde_json::json!({ "sent": true })));
+    }
+
     let Ok(row) = queries::get_user_by_email(&state.db, &req.email).await else {
         // Always return success so emails can't be enumerated.
         return Ok(Json(serde_json::json!({ "sent": true })));
@@ -671,7 +721,19 @@ pub async fn reset_password(
         decode_b64(&req.encrypted_private_key, "encrypted_private_key")?;
     let new_private_key_nonce = decode_b64(&req.private_key_nonce, "private_key_nonce")?;
 
+    let new_recovery_auth_hash =
+        decode_credential(&req.new_recovery_auth_hash, "new_recovery_auth_hash")?;
+    let new_encrypted_private_key_recovery = decode_b64(
+        &req.new_encrypted_private_key_recovery,
+        "new_encrypted_private_key_recovery",
+    )?;
+    let new_private_key_recovery_nonce = decode_b64(
+        &req.new_private_key_recovery_nonce,
+        "new_private_key_recovery_nonce",
+    )?;
+
     let new_password_hash = state.credentials.hash(&new_auth_hash);
+    let new_recovery_code_hash = state.credentials.hash(&new_recovery_auth_hash);
 
     queries::update_user_password_and_keys(
         &state.db,
@@ -680,6 +742,10 @@ pub async fn reset_password(
         &new_encrypted_private_key,
         &new_private_key_nonce,
         &req.private_key_algorithm,
+        &new_recovery_code_hash,
+        &new_encrypted_private_key_recovery,
+        &new_private_key_recovery_nonce,
+        &req.new_private_key_recovery_algorithm,
     )
     .await?;
 
@@ -770,6 +836,13 @@ pub async fn verify_totp(
     CurrentUser(user): CurrentUser,
     Json(req): Json<TotpVerifyRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    // Same guessing-game risk as `login_totp`, scoped to the account since the
+    // caller already holds a valid bearer token.
+    let rate_key = format!("totp-verify|{}", user.id);
+    if !state.login_rate_limiter.allow(&rate_key).await? {
+        return Err(NivritError::Forbidden.into());
+    }
+
     let Some(totp_key) = state.totp_encryption_key else {
         return Err(NivritError::Internal("TOTP encryption key not configured".into()).into());
     };
@@ -783,8 +856,10 @@ pub async fn verify_totp(
     let secret = nivrit_auth::totp::decrypt_secret(ciphertext, nonce, &totp_key)
         .map_err(|_| NivritError::Internal("failed to decrypt TOTP secret".into()))?;
     if !nivrit_auth::totp::verify_code(&secret, &req.code) {
+        let _ = state.login_rate_limiter.record_failure(&rate_key).await;
         return Err(NivritError::Validation("invalid TOTP code".into()).into());
     }
+    let _ = state.login_rate_limiter.record_success(&rate_key).await;
     queries::enable_totp(&state.db, user.id).await?;
     Ok(Json(serde_json::json!({ "enabled": true })))
 }
@@ -794,12 +869,18 @@ pub async fn disable_totp(
     CurrentUser(user): CurrentUser,
     Json(req): Json<TotpDisableRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let rate_key = format!("totp-disable|{}", user.id);
+    if !state.login_rate_limiter.allow(&rate_key).await? {
+        return Err(NivritError::Forbidden.into());
+    }
+
     let row = queries::get_user_by_id(&state.db, user.id).await?;
     let Some(password_hash) = row.password_hash.as_deref() else {
         return Err(NivritError::Forbidden.into());
     };
     let auth_hash = decode_credential(&req.auth_hash, "auth_hash")?;
     if !state.credentials.verify(&auth_hash, password_hash)? {
+        let _ = state.login_rate_limiter.record_failure(&rate_key).await;
         return Err(NivritError::Unauthorized.into());
     }
 
@@ -819,8 +900,10 @@ pub async fn disable_totp(
     let secret = nivrit_auth::totp::decrypt_secret(ciphertext, nonce, &totp_key)
         .map_err(|_| NivritError::Internal("failed to decrypt TOTP secret".into()))?;
     if !nivrit_auth::totp::verify_code(&secret, &req.code) {
+        let _ = state.login_rate_limiter.record_failure(&rate_key).await;
         return Err(NivritError::Validation("invalid TOTP code".into()).into());
     }
+    let _ = state.login_rate_limiter.record_success(&rate_key).await;
 
     queries::disable_totp(&state.db, user.id).await?;
     Ok(Json(serde_json::json!({ "disabled": true })))

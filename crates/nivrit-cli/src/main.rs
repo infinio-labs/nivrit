@@ -342,11 +342,23 @@ struct CliConfig {
     encrypted_private_key: Option<String>,
     private_key_nonce: Option<String>,
     private_key_algorithm: Option<String>,
-    /// Base64-encoded plaintext hybrid private key, cached locally after login.
-    private_key: Option<String>,
+    /// Whether this session decrypted the master password at least once, so
+    /// commands needing a project key can tell "no password was given" apart
+    /// from "not a member of this project". The plaintext private key itself
+    /// is never cached - only decrypted project keys are, and those are
+    /// wrapped under a local device key (see `encrypt_local`).
+    #[serde(default)]
+    master_key_available: bool,
     project_keys: HashMap<String, EncryptedKey>,
 }
 
+/// A value encrypted at rest under the local device wrapping key (see
+/// `local_wrap_key`), not under the user's password. This protects the config
+/// file from casual disclosure (backups, `cat`, other local processes reading
+/// the world-readable-by-default home directory) but not from another local
+/// process running as the same user, which could read the wrapping key too -
+/// that ceiling is inherent to any locally-cached secret and requires an OS
+/// keyring or hardware key to close.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct EncryptedKey {
     ciphertext: String,
@@ -736,10 +748,11 @@ fn load_config() -> CliConfig {
 
 /// Persist the CLI config.
 ///
-/// The file holds the plaintext hybrid private key and every project key the
-/// user can decrypt, so it is written owner-only. `std::fs::write` would create
-/// it 0666-and-umask — 0644 on a typical Linux box — leaving every secret in
-/// every project readable by any other local user or process.
+/// The file holds every project key the user can decrypt (wrapped under the
+/// local device key, see `encrypt_local`), so it is written owner-only.
+/// `std::fs::write` would create it 0666-and-umask — 0644 on a typical Linux
+/// box — leaving every secret in every project readable by any other local
+/// user or process able to also read the sibling keyring file.
 ///
 /// The permissions are set in the same call that creates the file, not
 /// afterwards, so there is no window in which the contents exist at the wider
@@ -830,6 +843,57 @@ fn decrypt_private_key(
         .map_err(|e| anyhow::anyhow!("failed to decrypt private key: {e}"))
 }
 
+fn local_wrap_key_path() -> PathBuf {
+    config_path()
+        .parent()
+        .expect("config path always has a parent")
+        .join("keyring")
+}
+
+/// Load this device's local wrapping key, generating and persisting one on
+/// first use. Unlike the password-derived key, this never leaves the device
+/// and is not recoverable - it exists only to keep cached project keys off
+/// disk in plaintext, not to protect them from the account owner.
+fn local_wrap_key() -> anyhow::Result<[u8; 32]> {
+    load_or_create_wrap_key(&local_wrap_key_path())
+}
+
+fn load_or_create_wrap_key(path: &std::path::Path) -> anyhow::Result<[u8; 32]> {
+    if let Ok(existing) = std::fs::read(path) {
+        if let Ok(key) = <[u8; 32]>::try_from(existing.as_slice()) {
+            return Ok(key);
+        }
+    }
+    let key = nivrit_crypto::keys::random_bytes::<32>();
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("keyring path has no parent directory"))?;
+    create_private_dir(parent)?;
+    write_private_file(path, &key)?;
+    Ok(key)
+}
+
+/// Encrypt `plaintext` under the local device key for storage in the config
+/// cache (e.g. a decapsulated project key). A fresh random nonce is generated
+/// per call, unlike the placeholder empty nonce this replaces.
+fn encrypt_local(plaintext: &[u8]) -> anyhow::Result<EncryptedKey> {
+    let key = local_wrap_key()?;
+    let encrypted = encrypt_value(plaintext, &key)
+        .map_err(|e| anyhow::anyhow!("failed to encrypt cached key material: {e}"))?;
+    Ok(EncryptedKey {
+        ciphertext: STANDARD.encode(&encrypted.ciphertext),
+        nonce: STANDARD.encode(&encrypted.nonce),
+    })
+}
+
+fn decrypt_local(encrypted: &EncryptedKey) -> anyhow::Result<Vec<u8>> {
+    let key = local_wrap_key()?;
+    let ciphertext = STANDARD.decode(&encrypted.ciphertext)?;
+    let nonce = STANDARD.decode(&encrypted.nonce)?;
+    decrypt_value(&ciphertext, &nonce, &key)
+        .map_err(|e| anyhow::anyhow!("failed to decrypt cached key material: {e}"))
+}
+
 async fn register(
     client: &reqwest::Client,
     server: &str,
@@ -915,7 +979,7 @@ async fn register(
     config.encrypted_private_key = Some(STANDARD.encode(&encrypted_private_key));
     config.private_key_nonce = Some(STANDARD.encode(&private_key_nonce));
     config.private_key_algorithm = Some("aes256gcm-v1".into());
-    config.private_key = Some(STANDARD.encode(&private_key_plaintext));
+    config.master_key_available = true;
 
     #[derive(Serialize)]
     struct RegisterOut {
@@ -1006,7 +1070,7 @@ async fn finish_password_login(
     config.encrypted_private_key = Some(encrypted_private_key_b64.to_string());
     config.private_key_nonce = Some(private_key_nonce_b64.to_string());
     config.private_key_algorithm = Some(private_key_algorithm);
-    config.private_key = Some(STANDARD.encode(&private_key_plaintext));
+    config.master_key_available = true;
 
     print_login_output(format, email, config.project_keys.len());
     Ok(())
@@ -1050,10 +1114,7 @@ async fn recover_project_keys(
 
         config.project_keys.insert(
             project_id.to_string(),
-            EncryptedKey {
-                ciphertext: STANDARD.encode(project_key),
-                nonce: STANDARD.encode(&[] as &[u8]),
-            },
+            encrypt_local(project_key.as_slice())?,
         );
     }
     Ok(())
@@ -1126,7 +1187,7 @@ async fn login_with_pat(
         let private_key_plaintext =
             decrypt_private_key(&encrypted_private_key, &private_key_nonce, password)?;
         recover_project_keys(client, server, config, pat, &private_key_plaintext).await?;
-        config.private_key = Some(STANDARD.encode(&private_key_plaintext));
+        config.master_key_available = true;
     }
 
     print_login_output(format, email, config.project_keys.len());
@@ -1289,13 +1350,9 @@ async fn create_project(
     let project_id = res["id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("project id missing in create project response"))?;
-    config.project_keys.insert(
-        project_id.to_string(),
-        EncryptedKey {
-            ciphertext: STANDARD.encode(project_key),
-            nonce: STANDARD.encode(&[] as &[u8]),
-        },
-    );
+    config
+        .project_keys
+        .insert(project_id.to_string(), encrypt_local(&project_key)?);
 
     let slug_resp = res["slug"]
         .as_str()
@@ -2552,7 +2609,7 @@ async fn rotate_key(
     // Re-encrypt every project key we hold to the new public key.
     let mut rotated_project_keys = Vec::new();
     for (project_id, encrypted) in &config.project_keys {
-        let project_key_bytes = STANDARD.decode(&encrypted.ciphertext)?;
+        let project_key_bytes = decrypt_local(encrypted)?;
         let project_key: [u8; 32] = project_key_bytes
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid project key length"))?;
@@ -2612,7 +2669,7 @@ async fn rotate_key(
         config.public_key = Some(STANDARD.encode(&new_public_key));
         config.encrypted_private_key = Some(STANDARD.encode(&new_encrypted_private_key));
         config.private_key_nonce = Some(STANDARD.encode(&new_private_key_nonce));
-        config.private_key = Some(STANDARD.encode(&new_private_key_plaintext));
+        config.master_key_available = true;
     } else {
         anyhow::bail!("server did not confirm key rotation");
     }
@@ -2644,7 +2701,7 @@ fn load_project_key(config: &CliConfig, project_id: &str) -> anyhow::Result<[u8;
         // Almost always means the session was established with a token but no
         // master password, so no project key could be unwrapped. Saying so beats
         // "project key not found", which reads like the project is missing.
-        if config.private_key.is_none() {
+        if !config.master_key_available {
             anyhow::anyhow!(
                 concat!(
                     "no decryption key for this project. ",
@@ -2659,8 +2716,8 @@ fn load_project_key(config: &CliConfig, project_id: &str) -> anyhow::Result<[u8;
             )
         }
     })?;
-    let ciphertext = STANDARD.decode(&encrypted.ciphertext)?;
-    ciphertext
+    let project_key = decrypt_local(encrypted)?;
+    project_key
         .try_into()
         .map_err(|_| anyhow::anyhow!("invalid project key length"))
 }
@@ -2681,9 +2738,10 @@ async fn invite_member(
     // 1. Look up the invitee's public key.
     let public_key_res: serde_json::Value = client
         .get(format!(
-            "{}/users/public-key?email={}",
+            "{}/users/public-key?email={}&project_id={}",
             config.server_url,
-            urlencoding::encode(email)
+            urlencoding::encode(email),
+            project_id
         ))
         .bearer_auth(token)
         .send()
@@ -2767,8 +2825,43 @@ mod tests {
         assert!(decrypt_private_key(&encrypted, &nonce, "wrong-password").is_err());
     }
 
-    /// The config file holds the plaintext private key and every project key,
-    /// so it must never be group- or world-readable.
+    /// The cached project-key wrap key must survive across process
+    /// invocations (each CLI command is a fresh process), so a second load
+    /// against the same path has to return the same key rather than minting
+    /// a new one and orphaning everything encrypted under the first.
+    #[test]
+    fn wrap_key_persists_across_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keyring");
+        let first = load_or_create_wrap_key(&path).unwrap();
+        let second = load_or_create_wrap_key(&path).unwrap();
+        assert_eq!(first, second);
+    }
+
+    /// `encrypt_local` must generate a real random nonce per call - this is
+    /// the exact bug being fixed (the old cache used a hardcoded empty nonce,
+    /// making the "ciphertext" field literally plaintext).
+    #[test]
+    fn encrypt_local_roundtrips_with_distinct_nonces() {
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        let plaintext = b"project-dek-bytes-not-really-32";
+
+        let a = encrypt_local(plaintext).unwrap();
+        let b = encrypt_local(plaintext).unwrap();
+        assert_ne!(a.nonce, b.nonce, "each encryption must use a fresh nonce");
+        assert_ne!(
+            a.ciphertext, b.ciphertext,
+            "ciphertext must not be a plaintext copy"
+        );
+
+        assert_eq!(decrypt_local(&a).unwrap(), plaintext);
+        assert_eq!(decrypt_local(&b).unwrap(), plaintext);
+    }
+
+    /// The config file holds every decrypted project key (device-wrapped, but
+    /// still a step closer to plaintext than anything else on disk), so it
+    /// must never be group- or world-readable.
     #[test]
     #[cfg(unix)]
     fn config_file_is_written_owner_only() {

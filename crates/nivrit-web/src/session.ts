@@ -190,7 +190,7 @@ export async function resetPasswordSession(
   token: string,
   recoveryCode: string,
   newPassword: string
-): Promise<Session> {
+): Promise<{ session: Session; recoveryCode: string }> {
   // The email comes back with the token check: both derivations are salted with
   // it, and the user does not have to retype it on the reset form.
   const { email } = await verifyResetToken(token);
@@ -198,7 +198,11 @@ export async function resetPasswordSession(
   const recoveryAuthHash = await deriveRecoveryAuthHash(recoveryCode, email);
 
   // Fetch the recovery blob, then unwrap and re-wrap the private key locally.
-  // The server sees neither the recovery code nor either password.
+  // The server sees neither the recovery code nor either password. This also
+  // mints a fresh recovery code to replace the one just used - a reset is
+  // often needed because the old one may be compromised, so leaving it valid
+  // would defeat the point. The new code is returned for one-time display,
+  // same as at registration.
   const blob = await resetPasswordBegin(token, recoveryAuthHash);
   const material = await resetPasswordMaterial(
     blob.encrypted_private_key_recovery,
@@ -215,8 +219,13 @@ export async function resetPasswordSession(
     encrypted_private_key: material.encrypted_private_key,
     private_key_nonce: material.private_key_nonce,
     private_key_algorithm: material.private_key_algorithm,
+    new_recovery_auth_hash: material.recovery_auth_hash,
+    new_encrypted_private_key_recovery: material.encrypted_private_key_recovery,
+    new_private_key_recovery_nonce: material.private_key_recovery_nonce,
+    new_private_key_recovery_algorithm: material.private_key_recovery_algorithm,
   });
-  return buildSession(response, newPassword);
+  const s = await buildSession(response, newPassword);
+  return { session: s, recoveryCode: material.recovery_code };
 }
 
 // OAuth
@@ -483,7 +492,7 @@ export async function inviteProjectMember(
   const s = getSessionOrThrow();
   const projectKey = s.projects.get(projectId);
   if (!projectKey) throw new Error('project key not available');
-  const recipient = await getPublicKey(s.token, email);
+  const recipient = await getPublicKey(s.token, email, projectId);
   const encapsulated = await encapsulateProjectKey(projectKey, recipient.public_key);
   await inviteMember(s.token, projectId, { email, role, encrypted_project_key: encapsulated });
 }

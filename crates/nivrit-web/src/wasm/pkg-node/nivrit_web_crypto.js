@@ -314,9 +314,16 @@ function init_panic_hook() {
 exports.init_panic_hook = init_panic_hook;
 
 /**
- * Recover the private key from a recovery blob and re-wrap it under a new
- * password. The recovery code, the old private key, and both passwords stay on
- * the client; the server receives only the new credential and new ciphertext.
+ * Recover the private key from a recovery blob, re-wrap it under a new
+ * password, *and* mint a fresh recovery code to replace the one just used.
+ *
+ * A reset is often needed because the old recovery code may itself be
+ * compromised - that is frequently the reason a reset is happening at all -
+ * so leaving it valid afterward would defeat the point. This mirrors what
+ * `generate_registration_material` does at signup and what `rotate_key` does
+ * on key rotation: the recovery code, the old private key, and both passwords
+ * stay on the client; the server receives only opaque credentials and
+ * ciphertext.
  * @param {string} encrypted_private_key_recovery_b64
  * @param {string} private_key_recovery_nonce_b64
  * @param {string} recovery_code

@@ -450,11 +450,18 @@ function App() {
   async function handleReset(e: React.FormEvent) {
     e.preventDefault();
     await withBusy('Recovering your keys…', async () => {
-      await resetPasswordSession(resetToken, recoveryCodeInput, password);
+      const { recoveryCode: rc } = await resetPasswordSession(
+        resetToken,
+        recoveryCodeInput,
+        password
+      );
       setPassword('');
       setRecoveryCodeInput('');
       setSession(getSession());
       setView('dashboard');
+      // The reset just minted a new recovery code and retired the one just
+      // used, so it has to be shown now - this is the only time it exists.
+      setRecoveryCode(rc);
       showToast('Password reset. You are signed in.', 'success');
     });
   }

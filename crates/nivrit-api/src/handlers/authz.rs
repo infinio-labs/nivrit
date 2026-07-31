@@ -1,11 +1,18 @@
 use nivrit_core::{NivritError, Result, Role};
-use nivrit_db::{models::ProjectMemberRow, pool::DbPool, queries};
+use nivrit_db::{
+    models::{OrgMembershipRow, ProjectMemberRow},
+    pool::DbPool,
+    queries,
+};
 use uuid::Uuid;
 
-/// Verify that `user_id` is a member of `org_id`.
-pub async fn require_org_member(db: &DbPool, org_id: Uuid, user_id: Uuid) -> Result<()> {
-    queries::get_org_member(db, org_id, user_id).await?;
-    Ok(())
+/// Verify that `user_id` is a member of `org_id` and return the membership row.
+pub async fn require_org_member(
+    db: &DbPool,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<OrgMembershipRow> {
+    queries::get_org_member(db, org_id, user_id).await
 }
 
 /// Verify that `user_id` is a member of `project_id` and return the membership row.
@@ -19,7 +26,25 @@ pub async fn require_project_member(
 
 /// Return `Ok(role)` if the member's role is at least `required`, otherwise `Forbidden`.
 pub fn require_role(membership: &ProjectMemberRow, required: Role) -> Result<Role> {
-    let role = role_from_str(&membership.role)?;
+    require_role_str(&membership.role, required)
+}
+
+/// Return `Ok(role)` if the org member's role is at least `required`, otherwise
+/// `Forbidden`.
+///
+/// Org membership alone is not a privilege grant: a user lands in an org's
+/// membership table as a Viewer merely by being invited to *one project*
+/// inside it (see `invite_member` in `handlers::projects`), with no org owner
+/// ever deciding they should be trusted with the org itself. Any handler that
+/// lets an org member take an org-wide action (creating a project, inviting
+/// another org member, ...) must gate on this, not just on `require_org_member`
+/// succeeding.
+pub fn require_org_role(membership: &OrgMembershipRow, required: Role) -> Result<Role> {
+    require_role_str(&membership.role, required)
+}
+
+fn require_role_str(role: &str, required: Role) -> Result<Role> {
+    let role = role_from_str(role)?;
     if role_rank(role) >= role_rank(required) {
         Ok(role)
     } else {
@@ -90,5 +115,37 @@ mod tests {
     fn invalid_db_role_errors() {
         let m = membership_with_role("owner");
         assert!(require_role(&m, Role::Viewer).is_err());
+    }
+
+    fn org_membership_with_role(role: &str) -> OrgMembershipRow {
+        OrgMembershipRow {
+            id: Uuid::nil(),
+            org_id: Uuid::nil(),
+            user_id: Uuid::nil(),
+            role: role.into(),
+            created_at: Utc::now(),
+        }
+    }
+
+    /// An org Viewer only got there by being invited to one project, not by an
+    /// org owner's decision - so it must not clear a Member-level gate like
+    /// `create_project`'s.
+    #[test]
+    fn org_viewer_cannot_clear_member_gate() {
+        let m = org_membership_with_role("viewer");
+        assert!(require_org_role(&m, Role::Member).is_err());
+        assert_eq!(require_org_role(&m, Role::Viewer).unwrap(), Role::Viewer);
+    }
+
+    #[test]
+    fn org_member_and_admin_clear_member_gate() {
+        assert_eq!(
+            require_org_role(&org_membership_with_role("member"), Role::Member).unwrap(),
+            Role::Member
+        );
+        assert_eq!(
+            require_org_role(&org_membership_with_role("admin"), Role::Member).unwrap(),
+            Role::Admin
+        );
     }
 }
