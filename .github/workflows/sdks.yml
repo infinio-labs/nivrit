@@ -1,7 +1,5 @@
 name: SDKs
 
-# Private-repo jobs use the Linux x64 self-hosted runner. Making the repository
-# public restores the full GitHub-hosted platform matrix automatically.
 on:
   push:
     branches: [main]
@@ -30,7 +28,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event.repository.private && '[{"target":"x86_64-unknown-linux-gnu","os":"self-hosted","asset":"nivrit-crypto-helper-linux-x86_64"}]' || '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"nivrit-crypto-helper-linux-x86_64"},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"nivrit-crypto-helper-linux-aarch64"},{"target":"x86_64-apple-darwin","os":"macos-15","asset":"nivrit-crypto-helper-darwin-x86_64"},{"target":"aarch64-apple-darwin","os":"macos-15","asset":"nivrit-crypto-helper-darwin-arm64"},{"target":"x86_64-pc-windows-msvc","os":"windows-2025","asset":"nivrit-crypto-helper-windows-x86_64.exe"}]') }}
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            asset: nivrit-crypto-helper-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04
+            asset: nivrit-crypto-helper-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-15
+            asset: nivrit-crypto-helper-darwin-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-15
+            asset: nivrit-crypto-helper-darwin-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
+            asset: nivrit-crypto-helper-windows-x86_64.exe
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -64,25 +77,28 @@ jobs:
 
   smoke-tests:
     name: Smoke tests (${{ matrix.sdk }})
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     needs: build-helper
     env:
-      DATABASE_URL: postgres://nivrit:nivrit@localhost:55432/nivrit
+      DATABASE_URL: postgres://nivrit:nivrit@localhost:5432/nivrit
+      # auth_secret has been a required config field since credentials moved to
+      # a keyed HMAC; the API process this job starts fails config load without it.
+      NIVRIT_AUTH_SECRET: ci-smoke-test-secret-not-for-production-use-32b
     strategy:
       fail-fast: false
       matrix:
         sdk: [node, python, go, rust]
     services:
       postgres:
-        image: postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        image: postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
         env:
           POSTGRES_USER: nivrit
           POSTGRES_PASSWORD: nivrit
           POSTGRES_DB: nivrit
         ports:
-          - 55432:5432
+          - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U nivrit -d nivrit"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -179,7 +195,7 @@ jobs:
   # bug). Faster than the e2e smoke job and isolates the crypto contract.
   crypto-parity:
     name: SDK crypto parity (${{ matrix.sdk }})
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     needs: build-helper
     strategy:
       fail-fast: false
@@ -256,7 +272,6 @@ jobs:
   # the helper via env/dev path and never exercise it.
   packaged-install:
     name: Packaged install (${{ matrix.sdk }})
-    if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     needs: build-helper
     strategy:
@@ -336,8 +351,11 @@ jobs:
         run: |
           cp -r ../../helpers .
           bash scripts/build-platform-packages.sh
-          sdk_tgz="$PWD/$(bun pm pack --quiet)"
-          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pm pack --quiet)"
+          # bun pm pack --quiet still emits a leading blank line before the
+          # filename; $(...) only strips trailing newlines, so without
+          # `tail -n1` the leading one splits $PWD/<filename> in two.
+          sdk_tgz="$PWD/$(bun pm pack --quiet | tail -n1)"
+          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pm pack --quiet | tail -n1)"
           proj=$(mktemp -d)
           cp test/packaged.js "$proj/packaged.js"
           cd "$proj"

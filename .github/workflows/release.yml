@@ -1,7 +1,5 @@
 name: Release
 
-# Private-repo jobs use the Linux x64 self-hosted runner. Making the repository
-# public restores the full GitHub-hosted platform matrix automatically.
 # Tag-triggered release. The tag (e.g. v0.1.0) must match the version already
 # committed in every SDK manifest and the workspace Cargo.toml — this workflow
 # publishes, it does not bump. Cut a "bump versions" commit first, then tag.
@@ -29,7 +27,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event.repository.private && '[{"target":"x86_64-unknown-linux-gnu","os":"self-hosted","asset":"nivrit-crypto-helper-linux-x86_64"}]' || '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"nivrit-crypto-helper-linux-x86_64"},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"nivrit-crypto-helper-linux-aarch64"},{"target":"x86_64-apple-darwin","os":"macos-15","asset":"nivrit-crypto-helper-darwin-x86_64"},{"target":"aarch64-apple-darwin","os":"macos-15","asset":"nivrit-crypto-helper-darwin-arm64"},{"target":"x86_64-pc-windows-msvc","os":"windows-2025","asset":"nivrit-crypto-helper-windows-x86_64.exe"}]') }}
+        include:
+          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-24.04,  asset: nivrit-crypto-helper-linux-x86_64 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04,  asset: nivrit-crypto-helper-linux-aarch64 }
+          - { target: x86_64-apple-darwin,       os: macos-15,   asset: nivrit-crypto-helper-darwin-x86_64 }
+          - { target: aarch64-apple-darwin,      os: macos-15,   asset: nivrit-crypto-helper-darwin-arm64 }
+          - { target: x86_64-pc-windows-msvc,    os: windows-2025, asset: nivrit-crypto-helper-windows-x86_64.exe }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -59,7 +62,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event.repository.private && '[{"target":"x86_64-unknown-linux-gnu","os":"self-hosted","asset":"niv-linux-x86_64"}]' || '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"niv-linux-x86_64"},{"target":"aarch64-unknown-linux-gnu","os":"ubuntu-24.04","asset":"niv-linux-aarch64"},{"target":"x86_64-apple-darwin","os":"macos-15","asset":"niv-darwin-x86_64"},{"target":"aarch64-apple-darwin","os":"macos-15","asset":"niv-darwin-arm64"},{"target":"x86_64-pc-windows-msvc","os":"windows-2025","asset":"niv-windows-x86_64.exe"}]') }}
+        include:
+          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-24.04,  asset: niv-linux-x86_64 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04,  asset: niv-linux-aarch64 }
+          - { target: x86_64-apple-darwin,       os: macos-15,   asset: niv-darwin-x86_64 }
+          - { target: aarch64-apple-darwin,      os: macos-15,   asset: niv-darwin-arm64 }
+          - { target: x86_64-pc-windows-msvc,    os: windows-2025, asset: niv-windows-x86_64.exe }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -95,48 +103,10 @@ jobs:
           if-no-files-found: error
 
   # ---- GitHub Release with helper + CLI binaries attached --------------------
-  # ---- Reproducible web build, so a deployment can be independently checked --
-  build-web:
-    name: Web (reproducible)
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        with:
-          toolchain: 1.97.1
-          targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2
-        with:
-          tool: wasm-pack@0.15.0
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.3.14
-      # Emits crates/nivrit-web/dist plus a SHA256SUMS manifest. Source paths are
-      # remapped so the output does not depend on the builder's home directory,
-      # which is what makes the published checksums verifiable by anyone else.
-      - name: Build
-        run: ./scripts/build-web-reproducible.sh
-      # Building twice and comparing proves the claim rather than assuming it. If
-      # a dependency ever introduces a timestamp or a random seed, this fails at
-      # release time instead of silently publishing a checksum nobody can match.
-      - name: Prove the build is reproducible
-        run: |
-          cp crates/nivrit-web/dist/SHA256SUMS /tmp/expected-SHA256SUMS
-          ./scripts/build-web-reproducible.sh --verify /tmp/expected-SHA256SUMS
-      - name: Package
-        run: |
-          mkdir -p release
-          tar -czf release/nivrit-web-dist.tar.gz -C crates/nivrit-web/dist .
-          cp crates/nivrit-web/dist/SHA256SUMS release/nivrit-web-SHA256SUMS
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: nivrit-web
-          path: release/*
-
   github-release:
     name: GitHub Release
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
-    needs: [build-helper, build-cli, build-web]
+    runs-on: ubuntu-24.04
+    needs: [build-helper, build-cli]
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -148,9 +118,6 @@ jobs:
           for d in artifacts/niv-* artifacts/nivrit-crypto-helper-*; do
             cp "$(find "$d" -type f | head -1)" "release/$(basename "$d")"
           done
-          # The web bundle ships with its checksums so anyone can rebuild this
-          # tag and confirm a deployment is serving the code in this repository.
-          cp artifacts/nivrit-web/* release/ 2>/dev/null || true
           ls -la release
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
@@ -160,7 +127,6 @@ jobs:
   # ---- Publish the registry SDKs (helper bundled per ecosystem) --------------
   publish-sdks:
     name: Publish ${{ matrix.sdk }}
-    if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     needs: build-helper
     strategy:
@@ -302,13 +268,11 @@ jobs:
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
 
-  # ---- Rust SDK -> crates.io -------------------------------------------------
-  # Published in dependency order, because crates.io resolves each crate's deps
-  # from the registry rather than from this tree. Every other workspace crate is
-  # `publish = false`: the API and CLI ship as binaries and images instead.
+  # ---- Rust SDK -> crates.io (publish nivrit-crypto first, then the SDK) -----
+  # ponytail: assumes nivrit-crypto's own deps (e.g. nivrit-core) are already on
+  # crates.io. If not, add them ahead of this in dependency order, or this fails.
   publish-rust:
     name: Publish Rust (crates.io)
-    if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -317,7 +281,6 @@ jobs:
           toolchain: 1.97.1
       - name: Publish crates in dependency order
         run: |
-          cargo publish --locked -p nivrit-core
           cargo publish --locked -p nivrit-crypto
           cargo publish --locked -p nivrit-sdk
         env:
@@ -326,7 +289,7 @@ jobs:
   # ---- Container images -> GHCR ----------------------------------------------
   docker:
     name: Image (${{ matrix.image }})
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
