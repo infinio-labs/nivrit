@@ -5,8 +5,8 @@
 [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![GitHub release](https://img.shields.io/github/v/release/infinio-labs/nivrit?logo=github)](https://github.com/infinio-labs/nivrit/releases/latest)
 
-A Rust-based secret management platform with client-side end-to-end encryption,
-post-quantum hybrid key exchange, and post-quantum audit-log signatures.
+A secret manager that never sees your secrets — and won't be caught flat-footed
+when quantum computers get good enough to matter.
 
 ## Status
 
@@ -20,32 +20,26 @@ and set/get client-side encrypted secrets end-to-end.
 > Elixir) are **experimental / community-contributed** and not yet part of the
 > supported surface.
 
-## How Nivrit differs from Infisical
+## What you actually get
 
-Infisical is a reference for Nivrit's UX and product shape, but the two are positioned
-differently:
+- **The server never sees a secret.** Everything is encrypted in your browser (WASM)
+  or your CLI before it leaves the device. Not "encrypted at rest" — encrypted before
+  it's ever transmitted. Dump the database and you get ciphertext, full stop.
+- **Your password never leaves home either.** The client derives an opaque `auth_hash`
+  and sends *that* to log in; the key that actually unwraps your private key is
+  derived locally and never crosses the wire. Even a fully compromised, fully logged
+  server can't reconstruct it.
+- **Post-quantum from day one, not a "coming soon."** Key exchange is a hybrid
+  **X25519 + ML-KEM-768** — so even if ML-KEM alone gets broken, the classical X25519
+  leg still holds the line. Audit logs are signed with **ML-DSA-65**, so the trail
+  itself is quantum-resistant too. One honest caveat: the underlying `ml-kem`/`ml-dsa`
+  crates are correct-to-spec but pre-1.0 and not yet independently audited — true of
+  PQC-in-Rust broadly right now, worth knowing before you bet the farm on it.
+- **AGPL-3.0, self-hosted.** `docker compose up` and you're running the whole stack —
+  no hosted-only features, no closed fork drifting away from what you can read.
 
-- **Zero-knowledge by default, not as an option.** In Nivrit the server stores *only
-  ciphertext* — plaintext secrets are encrypted in the browser (WASM) / CLI before they
-  ever leave the client. The master password is never transmitted either: clients send
-  an opaque `auth_hash` derived from it, while the key that unwraps the private key is
-  derived separately and never leaves the device. An operator who logs every request
-  still cannot decrypt anything.
-- **Post-quantum today.** Key exchange uses a hybrid **X25519 + ML-KEM-768** scheme and
-  audit-log signatures use **ML-DSA-65**. This is built into the core, not a roadmap item.
-  The hybrid construction means a flaw in ML-KEM alone can't undo the classical X25519
-  guarantee. One caveat worth knowing: the underlying `ml-kem`/`ml-dsa` crates are
-  correct-to-spec RustCrypto implementations, but are pre-1.0 and not yet FIPS-validated
-  or independently audited — true of PQC in pure Rust generally today, not specific to
-  this project, but worth knowing before relying on it for a high-stakes deployment.
-- **AGPL-3.0.** The license keeps hosted/modified versions open, so the zero-knowledge
-  claim stays auditable end to end.
-- **Self-host first.** One `docker compose up` runs the whole stack; there is no
-  closed-source hosted tier that diverges from what you can read.
-
-In short: Nivrit is the **post-quantum, zero-knowledge, AGPL** secret manager — Infisical
-is the broader, centrally-stored secret/platform manager. Nivrit is deliberately narrower
-and more private, not a clone.
+Small project, sharp focus: get zero-knowledge and post-quantum right, rather than
+being everything to everyone.
 
 ## Quick start
 
