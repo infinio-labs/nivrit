@@ -79,6 +79,11 @@ jobs:
     name: Smoke tests (${{ matrix.sdk }})
     runs-on: ubuntu-24.04
     needs: build-helper
+    env:
+      DATABASE_URL: postgres://nivrit:nivrit@localhost:5432/nivrit
+      # auth_secret has been a required config field since credentials moved to
+      # a keyed HMAC; the API process this job starts fails config load without it.
+      NIVRIT_AUTH_SECRET: ci-smoke-test-secret-not-for-production-use-32b
     strategy:
       fail-fast: false
       matrix:
@@ -109,6 +114,13 @@ jobs:
         with:
           shared-key: nivrit-api
 
+      - uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2
+        with:
+          tool: sqlx-cli@0.9.0
+
+      - name: Run migrations
+        run: sqlx migrate run --source crates/nivrit-db/migrations
+
       - name: Download helper
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -120,7 +132,6 @@ jobs:
 
       - name: Start API
         run: |
-          export DATABASE_URL=postgres://nivrit:nivrit@localhost:5432/nivrit
           cd crates/nivrit-api
           cargo run --locked --release > "$RUNNER_TEMP/nivrit-api.log" 2>&1 &
           api_pid=$!
@@ -223,6 +234,12 @@ jobs:
         with:
           otp-version: '29.0.3'
           elixir-version: '1.20.2'
+
+      - name: Setup Ruby
+        if: matrix.sdk == 'ruby'
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '4.0.6'
 
       - name: Ruby crypto test
         if: matrix.sdk == 'ruby'
@@ -334,8 +351,11 @@ jobs:
         run: |
           cp -r ../../helpers .
           bash scripts/build-platform-packages.sh
-          sdk_tgz="$PWD/$(bun pm pack --quiet)"
-          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pm pack --quiet)"
+          # bun pm pack --quiet still emits a leading blank line before the
+          # filename; $(...) only strips trailing newlines, so without
+          # `tail -n1` the leading one splits $PWD/<filename> in two.
+          sdk_tgz="$PWD/$(bun pm pack --quiet | tail -n1)"
+          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pm pack --quiet | tail -n1)"
           proj=$(mktemp -d)
           cp test/packaged.js "$proj/packaged.js"
           cd "$proj"
