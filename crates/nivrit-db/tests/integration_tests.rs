@@ -216,7 +216,7 @@ async fn project_membership_and_secret_crud() {
         None,
         "API_KEY",
         b"encrypted-value",
-        b"nonce",
+        b"nonce", // codeql[rust/hard-coded-cryptographic-value]
         "aes256gcm-v1",
     )
     .await
@@ -265,7 +265,7 @@ async fn secret_versioning_bumps_version() {
         None,
         "VERSIONED",
         b"v1",
-        b"nonce1",
+        b"nonce1", // codeql[rust/hard-coded-cryptographic-value]
         "aes256gcm-v1",
     )
     .await
@@ -279,7 +279,7 @@ async fn secret_versioning_bumps_version() {
         None,
         "VERSIONED",
         b"v2",
-        b"nonce2",
+        b"nonce2", // codeql[rust/hard-coded-cryptographic-value]
         "aes256gcm-v1",
     )
     .await

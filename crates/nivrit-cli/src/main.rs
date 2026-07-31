@@ -2810,7 +2810,7 @@ mod tests {
 
     #[test]
     fn private_key_encrypt_decrypt_roundtrip() {
-        let password = "correct-horse-battery-staple";
+        let password = "correct-horse-battery-staple"; // codeql[rust/hard-coded-cryptographic-value]
         let plaintext = b"hybrid-private-key-bytes";
         let (encrypted, nonce) = encrypt_private_key(plaintext, password).unwrap();
         let decrypted = decrypt_private_key(&encrypted, &nonce, password).unwrap();
@@ -2819,7 +2819,7 @@ mod tests {
 
     #[test]
     fn private_key_decrypt_fails_with_wrong_password() {
-        let password = "correct-horse-battery-staple";
+        let password = "correct-horse-battery-staple"; // codeql[rust/hard-coded-cryptographic-value]
         let plaintext = b"hybrid-private-key-bytes";
         let (encrypted, nonce) = encrypt_private_key(plaintext, password).unwrap();
         assert!(decrypt_private_key(&encrypted, &nonce, "wrong-password").is_err());

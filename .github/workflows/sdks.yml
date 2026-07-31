@@ -14,6 +14,9 @@ on:
       - 'crates/nivrit-crypto-helper/**'
       - '.github/workflows/sdks.yml'
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   NIVRIT_API_URL: http://localhost:4000

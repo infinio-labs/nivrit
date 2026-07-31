@@ -212,14 +212,14 @@ mod tests {
 
     #[test]
     fn accepts_a_long_passphrase() {
-        let result = assess_password("ferry unicorn glacier tuesday", None);
+        let result = assess_password("ferry unicorn glacier tuesday", None); // codeql[rust/hard-coded-cryptographic-value]
         assert!(result.acceptable);
         assert_eq!(result.strength, PasswordStrength::Strong);
     }
 
     #[test]
     fn accepts_but_nudges_an_adequate_password() {
-        let result = assess_password("sp1nach-wagon", None);
+        let result = assess_password("sp1nach-wagon", None); // codeql[rust/hard-coded-cryptographic-value]
         assert!(result.acceptable);
         assert_eq!(result.strength, PasswordStrength::Fair);
         assert!(result.message.is_some());
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn empty_password_has_no_scolding_message() {
-        let result = assess_password("", None);
+        let result = assess_password("", None); // codeql[rust/hard-coded-cryptographic-value]
         assert!(!result.acceptable);
         assert!(result.message.is_none());
     }
@@ -250,7 +250,7 @@ mod e2e_fixture_tests {
     #[test]
     fn e2e_fixture_password_satisfies_policy() {
         for email in ["alice-web-abc123@example.com", "bob-web-abc123@example.com"] {
-            let assessment = assess_password("web-test-glacier-tuesday", Some(email));
+            let assessment = assess_password("web-test-glacier-tuesday", Some(email)); // codeql[rust/hard-coded-cryptographic-value]
             assert!(
                 assessment.acceptable,
                 "e2e fixture password rejected for {email}: {:?}",

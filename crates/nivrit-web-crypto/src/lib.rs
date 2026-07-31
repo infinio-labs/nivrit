@@ -387,7 +387,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn generate_and_decrypt_private_key() {
-        let password = "correct-horse-battery-staple";
+        let password = "correct-horse-battery-staple"; // codeql[rust/hard-coded-cryptographic-value]
         let generated = generate_user_keypair(password).unwrap();
         let generated: GeneratedKeypair = serde_wasm_bindgen::from_value(generated).unwrap();
 
@@ -404,7 +404,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn wrong_password_fails_to_decrypt_private_key() {
-        let generated = generate_user_keypair("right-password").unwrap();
+        let generated = generate_user_keypair("right-password").unwrap(); // codeql[rust/hard-coded-cryptographic-value]
         let generated: GeneratedKeypair = serde_wasm_bindgen::from_value(generated).unwrap();
         assert!(decrypt_private_key(
             &generated.encrypted_private_key,
@@ -417,14 +417,14 @@ mod tests {
     #[wasm_bindgen_test]
     fn self_encapsulated_project_key_roundtrip() {
         let project_key = b64_encode(&nivrit_crypto::random_bytes::<32>());
-        let keypair = generate_user_keypair("password").unwrap();
+        let keypair = generate_user_keypair("password").unwrap(); // codeql[rust/hard-coded-cryptographic-value]
         let keypair: GeneratedKeypair = serde_wasm_bindgen::from_value(keypair).unwrap();
 
         let encapsulated = encapsulate_project_key(&project_key, &keypair.public_key).unwrap();
         let private_key_js = decrypt_private_key(
             &keypair.encrypted_private_key,
             &keypair.private_key_nonce,
-            "password",
+            "password", // codeql[rust/hard-coded-cryptographic-value]
         )
         .unwrap();
         let private_key: DecryptedPrivateKey =

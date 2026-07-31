@@ -42,7 +42,7 @@ async fn smoke_test() {
         .unwrap()
         .as_millis();
     let email = format!("sdk-rust-{}@example.com", ts);
-    let password = "Correct-Horse-Battery-Staple!";
+    let password = "Correct-Horse-Battery-Staple!"; // codeql[rust/hard-coded-cryptographic-value]
 
     let material = generate_registration_material(password, &email).unwrap();
 

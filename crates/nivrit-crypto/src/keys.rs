@@ -18,7 +18,7 @@ impl UserKeyPair {
 }
 
 pub fn random_bytes<const N: usize>() -> [u8; N] {
-    let mut buf = [0u8; N];
+    let mut buf = [0u8; N]; // codeql[rust/hard-coded-cryptographic-value]
     SysRng
         .try_fill_bytes(&mut buf)
         .expect("operating-system RNG failure");

@@ -95,7 +95,7 @@ async def main():
     secrets_list = session.list_secrets(project["id"], env["id"])
     assert len(secrets_list) == 1
     assert secrets_list[0]["value"] == "hello-python-sdk"
-    print("decrypted secret:", secrets_list[0]["value"])
+    print("decrypted secret matches expected value")
 
     api_request("DELETE", f"/auth/pats/{pat['id']}", token=reg["token"])
     print("revoked PAT")

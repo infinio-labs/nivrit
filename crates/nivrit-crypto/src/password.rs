@@ -57,7 +57,7 @@ fn deterministic_salt(domain: &[u8], identity: &str) -> [u8; 16] {
     hasher.update(b"\x00");
     hasher.update(identity.trim().to_lowercase().as_bytes());
     let digest = hasher.finalize();
-    let mut salt = [0u8; 16];
+    let mut salt = [0u8; 16]; // codeql[rust/hard-coded-cryptographic-value]
     salt.copy_from_slice(&digest[..16]);
     salt
 }
@@ -134,14 +134,14 @@ mod tests {
 
     #[test]
     fn auth_hash_is_deterministic_and_email_normalized() {
-        let a = derive_auth_hash(b"hunter2", "User@Example.com");
-        let b = derive_auth_hash(b"hunter2", "  user@example.com  ");
+        let a = derive_auth_hash(b"hunter2", "User@Example.com"); // codeql[rust/hard-coded-cryptographic-value]
+        let b = derive_auth_hash(b"hunter2", "  user@example.com  "); // codeql[rust/hard-coded-cryptographic-value]
         assert_eq!(a, b, "email must be normalized before salting");
     }
 
     #[test]
     fn auth_hash_differs_per_email_and_password() {
-        let base = derive_auth_hash(b"hunter2", "a@example.com");
+        let base = derive_auth_hash(b"hunter2", "a@example.com"); // codeql[rust/hard-coded-cryptographic-value]
         assert_ne!(base, derive_auth_hash(b"hunter2", "b@example.com"));
         assert_ne!(base, derive_auth_hash(b"hunter3", "a@example.com"));
     }
@@ -150,7 +150,7 @@ mod tests {
     /// (or reveal) the key that unwraps the private key.
     #[test]
     fn auth_hash_is_independent_of_encryption_key() {
-        let password = b"correct-horse-battery-staple";
+        let password = b"correct-horse-battery-staple"; // codeql[rust/hard-coded-cryptographic-value]
         let email = "user@example.com";
         let auth = derive_auth_hash(password, email);
 
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn derive_key_is_deterministic() {
-        let password = b"correct-horse-battery-staple";
+        let password = b"correct-horse-battery-staple"; // codeql[rust/hard-coded-cryptographic-value]
         let salt = random_bytes::<16>();
         let key1 = derive_key(password, &salt);
         let key2 = derive_key(password, &salt);
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn different_salts_produce_different_keys() {
-        let password = b"correct-horse-battery-staple";
+        let password = b"correct-horse-battery-staple"; // codeql[rust/hard-coded-cryptographic-value]
         let salt1 = random_bytes::<16>();
         let salt2 = random_bytes::<16>();
         let key1 = derive_key(password, &salt1);
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn derived_key_is_32_bytes() {
-        let key = derive_key(b"password", &random_bytes::<16>());
+        let key = derive_key(b"password", &random_bytes::<16>()); // codeql[rust/hard-coded-cryptographic-value]
         assert_eq!(key.len(), 32);
     }
 }
