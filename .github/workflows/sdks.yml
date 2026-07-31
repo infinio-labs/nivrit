@@ -351,8 +351,11 @@ jobs:
         run: |
           cp -r ../../helpers .
           bash scripts/build-platform-packages.sh
-          sdk_tgz="$PWD/$(bun pm pack --quiet)"
-          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pm pack --quiet)"
+          # bun pm pack --quiet still emits a leading blank line before the
+          # filename; $(...) only strips trailing newlines, so without
+          # `tail -n1` the leading one splits $PWD/<filename> in two.
+          sdk_tgz="$PWD/$(bun pm pack --quiet | tail -n1)"
+          helper_tgz="$PWD/npm/helper-linux-x64/$(cd npm/helper-linux-x64 && bun pm pack --quiet | tail -n1)"
           proj=$(mktemp -d)
           cp test/packaged.js "$proj/packaged.js"
           cd "$proj"
