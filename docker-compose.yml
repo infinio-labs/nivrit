@@ -40,7 +40,8 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      # No curl in the runtime image (distroless) -- the binary checks itself.
+      test: ["CMD", "/usr/local/bin/nivrit-api", "--healthcheck"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -52,7 +53,7 @@ services:
     container_name: nivrit-web
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "8080:8080"
     depends_on:
       api:
         condition: service_healthy

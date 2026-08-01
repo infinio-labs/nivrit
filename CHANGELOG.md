@@ -323,6 +323,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (self-hosters): the `nivrit-web` container now listens on 8080,
+  not 80.** Both compose files' host-side mapping is unchanged (`8080:...`),
+  so `http://localhost:8080` still works out of the box; only a custom
+  compose override that assumed the container's internal port needs updating.
+  Both images got smaller and lower-attack-surface, measured with `docker
+  images` rather than estimated: `nivrit-api` 117 MB → 36.9 MB
+  (`debian:bookworm-slim` → `gcr.io/distroless/cc-debian12:nonroot` — `ldd`
+  showed the binary only links libc/libgcc/libm, no OpenSSL at runtime, since
+  rustls and `aws-lc-rs` are statically linked); `nivrit-web` 63.3 MB →
+  47.4 MB (`nginx:alpine` → a static Caddy binary on
+  `gcr.io/distroless/static-debian12:nonroot`, doing the same three jobs
+  nginx did — CSP headers, SPA fallback, and reverse-proxying `/api/` so the
+  browser sees one origin — not just serving files smaller). Distroless has
+  no shell, which forced `nivrit-api` to embed its own migrations
+  (`sqlx::migrate!` at startup, replacing a separate `sqlx-cli` binary run
+  from a shell entrypoint) and gain a `--healthcheck` flag (replacing `curl
+  -f http://localhost:4000/health` in both compose files, since there's no
+  `curl` to run it externally anymore). Verified live in real containers:
+  all migrations apply against an empty database with no external step,
+  `--healthcheck` exits 0/1 correctly, `docker exec ... id` fails (no shell
+  present), the process runs as uid 65532 not root, and the web image's
+  security headers, SPA fallback, and `/api/` proxy all behave identically
+  to the nginx config they replaced.
 - **Breaking:** `/auth/register`, `/auth/login`, `/auth/oauth/setup`,
   `/auth/reset-password`, `/auth/totp/setup` and `/auth/totp/disable` take an
   `auth_hash` instead of a password, and `/auth/reset-password/begin` is new.

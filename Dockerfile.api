@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 
 # -----------------------------------------------------------------------------
-# Build stage for the Nivrit API server and CLI.
+# Build stage for the Nivrit API server.
 # -----------------------------------------------------------------------------
 FROM rust:1.97.1-bookworm@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa AS builder
 
@@ -24,47 +24,33 @@ COPY .sqlx ./.sqlx
 COPY crates ./crates
 COPY sdks/rust ./sdks/rust
 
-# Build the release binaries. The cache mounts keep dependency downloads and
+# Build the release binary. The cache mounts keep dependency downloads and
 # intermediate artifacts across rebuilds without bloating the final image.
+# Migrations are embedded at compile time (`sqlx::migrate!` in
+# `nivrit-db::DbPool::migrate`) -- the binary applies its own schema at
+# startup, so nothing else needs to ship in the runtime image to do it.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    CARGO_TARGET_DIR=/build/target cargo build --release -p nivrit-api -p nivrit-cli \
-    && cp /build/target/release/nivrit-api /build/target/release/niv /usr/local/bin/
-
-# Install sqlx-cli for running migrations at container startup.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo install sqlx-cli --version '=0.9.0' --locked --no-default-features --features native-tls,postgres \
-    && cp /usr/local/cargo/bin/sqlx /usr/local/bin/sqlx
+    CARGO_TARGET_DIR=/build/target cargo build --release -p nivrit-api \
+    && cp /build/target/release/nivrit-api /usr/local/bin/nivrit-api
 
 # -----------------------------------------------------------------------------
-# Runtime stage.
+# Runtime stage: distroless, not debian-slim. `nivrit-api` links only libc,
+# libgcc, and libm at runtime (verified with `ldd` -- rustls + aws-lc-rs are
+# statically linked, there is no OpenSSL dependency), so it needs nothing a
+# general-purpose Debian userland provides: no shell, no package manager, no
+# apt packages, no separate `sqlx-cli` binary for migrations, no `curl` for
+# the healthcheck (both of those are now `nivrit-api` itself -- see below and
+# `DbPool::migrate`). `:nonroot` runs as a built-in unprivileged user, so
+# there's no `useradd`/`USER` step either.
 # -----------------------------------------------------------------------------
-FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS runtime
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates=20230311+deb12u1 \
-        curl=7.88.1-10+deb12u15 \
-    && rm -rf /var/lib/apt/lists/*
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:fccdbb0a547c14e23fcf4ce8ad62ca5d43b4faae8d22cd292f490fef9946c96e AS runtime
 
 COPY --from=builder /usr/local/bin/nivrit-api /usr/local/bin/nivrit-api
-COPY --from=builder /usr/local/bin/niv /usr/local/bin/niv
-COPY --from=builder /usr/local/bin/sqlx /usr/local/bin/sqlx
-COPY --from=builder /usr/src/nivrit/crates/nivrit-db/migrations /usr/local/share/nivrit/migrations
-
-COPY scripts/docker-entrypoint-api.sh /usr/local/bin/docker-entrypoint-api.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint-api.sh
-
-# Run as an unprivileged user. A container process that does not need root
-# should not have it: it turns a container escape or a file-write bug from a
-# host-level compromise into a contained one.
-RUN useradd --system --create-home --uid 10001 nivrit
-USER nivrit
 
 # No runtime configuration is baked into the image: host/port default in code,
 # everything else (DATABASE_URL, secrets, OAuth, SMTP, ...) is injected at
 # runtime. EXPOSE is metadata only, not an environment variable.
 EXPOSE 4000
 
-ENTRYPOINT ["docker-entrypoint-api.sh"]
-CMD ["nivrit-api"]
+ENTRYPOINT ["/usr/local/bin/nivrit-api"]

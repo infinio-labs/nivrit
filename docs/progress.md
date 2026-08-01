@@ -2,7 +2,7 @@
 
 **Project:** Nivrit (client-side end-to-end encrypted secret manager)  
 **Path:** `/home/sid/Projects/InfinioLabs/nivrit`  
-**Last updated:** 2026-08-01 (Node/Python/Go SDKs wired to versioned project keys; environment-scoped RBAC with web UI + CLI management, ADR 0008/0009/0010; `niv collapse-project-key` re-encryption tool; cloud KEK operational docs)
+**Last updated:** 2026-08-01 (Node/Python/Go SDKs wired to versioned project keys; environment-scoped RBAC with web UI + CLI management, ADR 0008/0009/0010; `niv collapse-project-key` re-encryption tool; cloud KEK operational docs; Docker images cut ~68%/~25% via distroless + Caddy)
 
 This document captures the implementation progress across all roadmap phases, testing, tooling, and dependency hygiene.
 
@@ -157,6 +157,60 @@ All commands currently pass.
 
 - Workspace-level `.sqlx/` query metadata generated and checked in.
 - `SQLX_OFFLINE=true cargo check --workspace --exclude nivrit-web-crypto` passes without a live database.
+
+### Minimal Docker images ✅
+
+Both published images were rebuilt and measured (`docker images`), not estimated:
+
+| Image | Before | After | Base |
+|-------|-------:|------:|------|
+| `nivrit-api` | 117 MB | **36.9 MB** | `gcr.io/distroless/cc-debian12:nonroot` (was `debian:bookworm-slim`) |
+| `nivrit-web` | 63.3 MB | **47.4 MB** | `gcr.io/distroless/static-debian12:nonroot` + a static Caddy binary (was `nginx:alpine`) |
+
+**API.** `ldd` on the release binary shows only `libc`/`libgcc`/`libm` — rustls +
+`aws-lc-rs` (`prefer-post-quantum` feature) are statically linked, no OpenSSL
+at runtime — so `distroless/cc` (glibc + libstdc++/libgcc, no shell, no
+package manager) is sufficient; a fully static `scratch` build would need a
+musl cross-compile of `aws-lc-rs`'s C library, untested and not attempted.
+Distroless has no shell, which forced two changes that are also just better
+design, not only smaller:
+- **Migrations are embedded in the binary** (`DbPool::migrate`, `sqlx::migrate!`)
+  and run at the start of `main()`, instead of a separate `sqlx-cli` binary
+  invoked from a `sh` entrypoint script — one binary, one startup sequence.
+- **`nivrit-api --healthcheck`** replaces `curl -f http://localhost:4000/health`
+  in both compose files' `HEALTHCHECK` — the binary hits its own `/health`
+  over loopback and exits 0/1, since there's no `curl` (or shell) in the image
+  to do it externally.
+- The `niv` CLI binary was also dropped from this image — nothing in it ever
+  used the CLI at runtime, it was just carried along.
+
+All verified live in a real container, not just by inspecting the Dockerfile:
+booted against an empty Postgres and confirmed all 20 migrations applied with
+no external migration step, `/health`/`/ready` both 200, `--healthcheck` exits
+0 when healthy, `docker exec ... id` fails (no shell present, confirming a
+real attack-surface reduction, not just a smaller number), and the process
+runs as uid 65532 (`nonroot`), not root.
+
+**Web.** `nginx.web.conf` did three jobs — CSP/security headers, SPA fallback
+routing, and reverse-proxying `/api/` to the backend so the browser sees one
+origin (`connect-src 'self'` in the CSP holds, no CORS hop needed) — so the
+replacement had to keep all three, not just serve static files smaller.
+Caddy does all three natively (`Caddyfile`); the official `caddy:2-alpine`
+binary is statically linked (confirmed with `ldd`: "not a dynamic program"),
+so it runs on `distroless/static` — no libc at all, just the binary and the
+CA bundle distroless already ships. Runs on port 8080 internally now (the
+`nonroot` user can't bind privileged port 80); the host-side port mapping in
+both compose files is unchanged (`8080:8080` instead of `8080:80`). Verified
+live: security headers present with the exact same values as the nginx
+config, an unknown deep path falls back to `index.html` (200, not 404), and
+`/api/health` through the proxy reaches the real API container and returns
+`ok`.
+
+A genuinely smaller *floor* exists for the web image (~10-15 MB) by dropping
+the reverse proxy entirely and serving pure static files, but that changes
+the CSP (`connect-src 'self'` would need to name the API's origin explicitly)
+and makes CORS load-bearing instead of same-origin — a real security-posture
+decision, not a size optimization, and deliberately not made here.
 
 ---
 
