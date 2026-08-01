@@ -29,7 +29,7 @@ interface WorkerResponse {
 }
 
 const ctx = self as unknown as {
-  postMessage: (msg: WorkerResponse) => void;
+  postMessage: (msg: WorkerResponse | { ready: true }) => void;
   onmessage: ((ev: MessageEvent<WorkerRequest>) => void) | null;
 };
 
@@ -42,3 +42,13 @@ ctx.onmessage = (ev) => {
     ctx.postMessage({ id, error: err instanceof Error ? err.message : String(err) });
   }
 };
+
+// Module workers load asynchronously: `new Worker(url, {type:'module'})`
+// returns before this script has finished importing and evaluating (the wasm
+// import above included). A caller that posts a request immediately after
+// construction races this file's own load -- and in at least one Chromium
+// build, a message sent before the worker's module finishes evaluating is
+// silently dropped rather than queued, hanging the caller forever with no
+// error anywhere. Signal readiness explicitly so callers can wait for it
+// instead of assuming construction implies readiness.
+ctx.postMessage({ ready: true });

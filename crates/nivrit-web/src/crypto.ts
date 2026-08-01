@@ -58,32 +58,54 @@ function isTestEnv(): boolean {
 
 type HeavyFnName = import('./crypto.worker').HeavyFnName;
 
-let worker: Worker | null = null;
+let workerReady: Promise<Worker> | null = null;
 let nextRequestId = 0;
 const pendingRequests = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
 
-function getWorker(): Worker {
-  if (!worker) {
-    worker = new Worker(new URL('./crypto.worker.ts', import.meta.url), { type: 'module' });
-    worker.onmessage = (ev: MessageEvent<{ id: number; result?: unknown; error?: string }>) => {
-      const pending = pendingRequests.get(ev.data.id);
-      if (!pending) return;
-      pendingRequests.delete(ev.data.id);
-      if (ev.data.error) pending.reject(new Error(ev.data.error));
-      else pending.resolve(ev.data.result);
-    };
+// `new Worker(url, {type: 'module'})` returns before the worker's module has
+// finished loading -- posting to it immediately races that load. In at least
+// one Chromium build, a message sent before the worker's `onmessage` handler
+// is attached is silently dropped rather than queued, hanging the caller
+// forever with no error anywhere (no worker.onerror, no rejected promise).
+// crypto.worker.ts posts `{ready: true}` once it's actually able to receive
+// messages; wait for that before sending the first real request.
+function getReadyWorker(): Promise<Worker> {
+  if (!workerReady) {
+    workerReady = new Promise((resolve, reject) => {
+      const w = new Worker(new URL('./crypto.worker.ts', import.meta.url), { type: 'module' });
+      w.onmessage = (ev: MessageEvent<{ ready?: true; id?: number; result?: unknown; error?: string }>) => {
+        if (ev.data.ready) {
+          w.onmessage = (inner: MessageEvent<{ id: number; result?: unknown; error?: string }>) => {
+            const pending = pendingRequests.get(inner.data.id);
+            if (!pending) return;
+            pendingRequests.delete(inner.data.id);
+            if (inner.data.error) pending.reject(new Error(inner.data.error));
+            else pending.resolve(inner.data.result);
+          };
+          resolve(w);
+          return;
+        }
+        // A response arriving before the ready sentinel would mean the
+        // sentinel itself was lost; fail loudly rather than hang.
+        reject(new Error('crypto worker sent a response before signaling ready'));
+      };
+      w.onerror = (ev: ErrorEvent) => {
+        reject(new Error(`crypto worker failed to load: ${ev.message}`));
+      };
+    });
   }
-  return worker;
+  return workerReady;
 }
 
-function callHeavy<T>(fn: HeavyFnName, args: unknown[]): Promise<T> {
+async function callHeavy<T>(fn: HeavyFnName, args: unknown[]): Promise<T> {
   if (isTestEnv()) {
-    return Promise.resolve((getWasm()[fn] as (...a: unknown[]) => unknown)(...args) as T);
+    return (getWasm()[fn] as (...a: unknown[]) => unknown)(...args) as T;
   }
+  const w = await getReadyWorker();
   return new Promise((resolve, reject) => {
     const id = nextRequestId++;
     pendingRequests.set(id, { resolve: resolve as (v: unknown) => void, reject });
-    getWorker().postMessage({ id, fn, args });
+    w.postMessage({ id, fn, args });
   });
 }
 

@@ -353,14 +353,13 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
    the wrapping key, leave wrapped data alone), not the eager bulk-re-encrypt design
    this finding originally implied was needed — research done as part of fixing this
    specifically argued against that approach. Server (`nivrit-db`, `nivrit-api`), CLI,
-   and the web UI are wired end-to-end. Server + CLI verified live (register two
-   users, rotate mid-session, confirm the pre-existing member automatically receives
-   the new version while decrypting old ciphertext under the old one); the web UI is
-   covered by real-crypto (non-mocked WASM) unit tests plus a Playwright scenario,
-   though the latter didn't reach a visible pass in this environment — registration's
-   WASM step didn't complete inside 60s here, before the rotation code even runs, a
-   pre-existing environment issue rather than something this work caused. Non-Rust
-   SDKs (Node/Python/Go) are not yet updated — see ADR 0008's consequences section. (§5)
+   and the web UI are wired end-to-end and verified live: server + CLI across a real
+   two-user session with a mid-flight rotation, web UI via a full Playwright run
+   (register, rotate, confirm both pre- and post-rotation secrets decrypt) plus
+   real-crypto (non-mocked WASM) unit tests. Getting that Playwright run to pass
+   surfaced a real, separate bug — see §9.5 below — not something worth burying in
+   this bullet. Non-Rust SDKs (Node/Python/Go) are not yet updated —
+   see ADR 0008's consequences section. (§5)
 5. **RBAC is flat and project-scoped only**, despite `Environment` and `Folder`
    already existing as addressable models — no way to grant environment- or
    folder-level permissions today. A real gap versus Vault, Infisical, and Doppler.
@@ -404,6 +403,33 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
 18. ADR 0004's "one crypto binary instead of seven FFI layers" argument is well-supported for audit-burden and memory safety, but the ADR never weighs the flip side: concentrating all SDKs' crypto in one binary also concentrates risk into one high-value target — structurally the same concentration that made liblzma worth years of attacker effort. (§6)
 19. AGPL closes the "hidden, modified fork" threat but does nothing against a cloud provider reselling nivrit *unmodified* — the exact gap that drove MongoDB from AGPL to SSPL. Worth acknowledging directly rather than only implying "deters some commercial adoption." (§8)
 20. TLS 1.3 + `X25519MLKEM768` is a documented target in `docs/quantum-readiness-report.md`, not a verified in-repo deployment — the only TLS-adjacent config found terminates plain HTTP, implying TLS lives upstream, outside version control. The specific mechanism (`draft-ietf-tls-ecdhe-mlkem`) also remains an IETF draft, not a finalized RFC, as of this review. (§5)
+
+### 9.5 A real bug found while verifying, not by reviewing
+
+> **Status:** fixed. Not something this review's document-and-code-reading process
+> would have caught — it only surfaced because the web UI rotation work insisted on
+> a real, passing Playwright run instead of accepting "the unit tests pass" as
+> sufficient. Recorded here because it's a legitimate finding of this project, just
+> discovered by a different method than everything above.
+
+21. **`crypto.ts`'s Web Worker handoff had a real race: a message posted immediately
+    after `new Worker(...)` could be silently dropped**, hanging every heavy WASM
+    call (registration, login, password reset, project-key rotation) forever with no
+    error anywhere — no `worker.onerror`, no rejected promise, no console output.
+    `new Worker(url, {type: 'module'})` returns before the worker's module (a
+    top-level-await WASM import) has finished loading; posting a request in that
+    window races the load, and at least one Chromium build drops a message that
+    arrives before the worker's `onmessage` handler is attached, instead of queuing
+    it. Confirmed by instrumenting the worker directly rather than guessing from the
+    symptom: the module loaded fine, WASM initialized fine, `onmessage` got attached
+    fine — the request just never arrived. Fixed by having the worker post an
+    explicit `{ready: true}` signal once it can actually receive messages, with the
+    caller waiting for that before sending its first request. Worth stating plainly:
+    this could have been shipped and silently broken registration/login for some
+    unknown slice of real users in whatever browser build exhibits the race, and the
+    project's own unit tests would never have caught it, because they route around
+    the Worker entirely in the test environment. (§6, though it's a browser
+    implementation detail this document's architecture sections didn't cover)
 
 ## 10. Limitations of This Review
 

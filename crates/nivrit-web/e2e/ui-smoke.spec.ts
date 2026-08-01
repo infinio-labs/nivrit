@@ -130,6 +130,22 @@ test('register, store a secret, and read it back through the UI', async ({ page 
   // This account is the project admin, so entries are visible rather than 403.
   await expect(page.getByText('write').first()).toBeVisible({ timeout: 15_000 });
 
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+
+  // --- routing --------------------------------------------------------------
+  // Views used to be React state only: nothing was linkable and back did
+  // nothing. Each tab should now have its own URL and sit in history.
+  await expect(page).toHaveURL(/\/app\/settings$/);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/app\/audit$/);
+  await expect(page.getByRole('heading', { name: 'Audit log', exact: true })).toBeVisible();
+
+  await page.goForward();
+  await expect(page).toHaveURL(/\/app\/settings$/);
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
+
   // --- project-key rotation (ADR 0008) ---------------------------------------
   // Mint a new key version, then confirm secrets from *before* the rotation
   // still decrypt -- proving the browser correctly picked up the version the
@@ -154,22 +170,6 @@ test('register, store a secret, and read it back through the UI', async ({ page 
   await expect(page.getByText('POST_ROTATION_KEY')).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: 'Show' }).nth(1).click();
   await expect(page.getByText('sk-after-rotation')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Settings' }).click();
-  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
-
-  // --- routing --------------------------------------------------------------
-  // Views used to be React state only: nothing was linkable and back did
-  // nothing. Each tab should now have its own URL and sit in history.
-  await expect(page).toHaveURL(/\/app\/settings$/);
-
-  await page.goBack();
-  await expect(page).toHaveURL(/\/app\/audit$/);
-  await expect(page.getByRole('heading', { name: 'Audit log', exact: true })).toBeVisible();
-
-  await page.goForward();
-  await expect(page).toHaveURL(/\/app\/settings$/);
-  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
 
   // A React error would otherwise be invisible: the boundary renders a fallback
   // and the test would carry on past a broken page.
