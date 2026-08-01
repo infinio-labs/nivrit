@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        WITH target AS (\n            SELECT s.id AS secret_id, sv.encrypted_value, sv.nonce, sv.algorithm\n            FROM secrets s\n            JOIN secret_versions sv ON sv.secret_id = s.id AND sv.version = $5\n            WHERE s.project_id = $1 AND s.environment_id = $2\n              AND s.folder_id IS NOT DISTINCT FROM $3 AND s.key = $4\n        ),\n        upserted AS (\n            UPDATE secrets\n            SET encrypted_value = target.encrypted_value,\n                nonce = target.nonce,\n                algorithm = target.algorithm,\n                version = secrets.version + 1,\n                updated_at = NOW()\n            FROM target\n            WHERE secrets.id = target.secret_id\n            RETURNING secrets.id, secrets.project_id, secrets.environment_id, secrets.folder_id,\n                      secrets.key, secrets.encrypted_value, secrets.nonce, secrets.algorithm,\n                      secrets.version, secrets.created_at, secrets.updated_at\n        ),\n        versioned AS (\n            INSERT INTO secret_versions (secret_id, encrypted_value, nonce, version, algorithm)\n            SELECT id, encrypted_value, nonce, version, algorithm FROM upserted\n        )\n        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, created_at, updated_at\n        FROM upserted\n        ",
+  "query": "\n        WITH upserted AS (\n            INSERT INTO secrets (project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)\n            ON CONFLICT (project_id, environment_id, folder_id, key)\n            DO UPDATE SET\n                encrypted_value = EXCLUDED.encrypted_value,\n                nonce = EXCLUDED.nonce,\n                algorithm = EXCLUDED.algorithm,\n                version = secrets.version + 1,\n                project_key_version = EXCLUDED.project_key_version,\n                updated_at = NOW()\n            RETURNING id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version, created_at, updated_at\n        ),\n        versioned AS (\n            INSERT INTO secret_versions (secret_id, encrypted_value, nonce, version, algorithm, project_key_version)\n            SELECT id, encrypted_value, nonce, version, algorithm, project_key_version FROM upserted\n        )\n        SELECT * FROM upserted\n        ",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,17 @@
       },
       {
         "ordinal": 9,
+        "name": "project_key_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "project_key_version"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -131,6 +142,9 @@
         "Uuid",
         "Uuid",
         "Text",
+        "Bytea",
+        "Bytea",
+        "Text",
         "Int4"
       ]
     },
@@ -145,8 +159,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "951cd46d8af07717c36ce01c7b026d46f66ca48b689e99b7f93837888fcb323e"
+  "hash": "95227a5875ff808d481bdba40daeecc9f9827966a136ac586f46f7d15337fca1"
 }

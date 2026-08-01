@@ -517,6 +517,93 @@ pub async fn restore_secret(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ReencryptSecretRequest {
+    pub environment_id: Uuid,
+    pub folder_id: Option<Uuid>,
+    pub encrypted_value: String,
+    pub nonce: String,
+    #[serde(default = "default_algorithm")]
+    pub algorithm: String,
+    pub from_project_key_version: i32,
+    pub to_project_key_version: i32,
+}
+
+/// Rewrap a secret's ciphertext under a newer project-key version (ADR 0008
+/// addendum, "collapse to latest version"). The plaintext is unchanged --
+/// the caller (CLI `niv collapse-project-key`) decrypted under
+/// `from_project_key_version` and re-encrypted under `to_project_key_version`
+/// locally; the server only ever sees ciphertext, same as every other secret
+/// write. Unlike `create_secret`, this does not bump `version` or write a
+/// `secret_versions` row, since nothing about the secret's content changed.
+pub async fn reencrypt_secret(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    axum::extract::Path((project_id, key)): axum::extract::Path<(Uuid, String)>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(req): Json<ReencryptSecretRequest>,
+) -> ApiResult<Json<SecretResponse>> {
+    require_environment_role(
+        &state.db,
+        project_id,
+        req.environment_id,
+        user.id,
+        Role::Member,
+    )
+    .await?;
+
+    let encrypted_value = STANDARD
+        .decode(&req.encrypted_value)
+        .map_err(|e| NivritError::Validation(format!("invalid encrypted_value: {}", e)))?;
+    let nonce = STANDARD
+        .decode(&req.nonce)
+        .map_err(|e| NivritError::Validation(format!("invalid nonce: {}", e)))?;
+
+    let row = queries::reencrypt_secret(
+        &state.db,
+        project_id,
+        req.environment_id,
+        req.folder_id,
+        &key,
+        &encrypted_value,
+        &nonce,
+        &req.algorithm,
+        req.from_project_key_version,
+        req.to_project_key_version,
+    )
+    .await?;
+
+    let user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok());
+    let created_at = Utc::now().trunc_subsecs(6);
+    record_access(
+        &state,
+        project_id,
+        Some(req.environment_id),
+        Some(row.id),
+        user.id,
+        "reencrypt",
+        &key,
+        &addr.ip().to_string(),
+        user_agent,
+        created_at,
+    )
+    .await;
+
+    Ok(Json(SecretResponse {
+        id: row.id.to_string(),
+        project_id: row.project_id.to_string(),
+        environment_id: row.environment_id.to_string(),
+        folder_id: row.folder_id.map(|id| id.to_string()),
+        key: row.key,
+        encrypted_value: STANDARD.encode(&row.encrypted_value),
+        nonce: STANDARD.encode(&row.nonce),
+        algorithm: row.algorithm,
+        version: row.version,
+        project_key_version: row.project_key_version,
+    }))
+}
+
 pub async fn get_secret(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,

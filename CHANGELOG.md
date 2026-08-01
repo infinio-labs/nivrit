@@ -91,6 +91,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ListSecrets`/`GetSecret` resolving `project_key_version` per secret.
   Verified live the same way: a two-user run against a real API and the real
   `nivrit-crypto-helper` subprocess.
+- **`niv collapse-project-key` re-encrypts every secret still on an older
+  project-key version onto the current one.** Rotation ([ADR 0008](docs/adr/0008-versioned-project-keys.md))
+  deliberately never touches existing ciphertext — it's a metadata-only
+  operation, matching how NIST SP 800-57, AWS KMS, and HashiCorp Vault handle
+  their own rotation. That's correct as the default, but left no way for an
+  org that wants to fully retire an old key version, not just stop granting
+  it, to do so. The new command walks every environment and folder, decrypts
+  each secret client-side under whichever version it was written with, and
+  re-encrypts under the current version via a new
+  `PUT /projects/{id}/secrets/{key}/reencrypt` endpoint. This is a distinct
+  operation from a content edit: no `secret_versions` history row is written
+  and no content `version` counter moves, since the plaintext never changes —
+  only what wraps it. The endpoint records a `reencrypt` audit action (not
+  `write`) for the same reason, and uses optimistic concurrency on the
+  secret's current project-key version, so a real edit racing a collapse pass
+  gets a `409 Conflict` instead of one silently clobbering the other. A
+  secret the caller lacks write access to, or that fails this check, is
+  skipped and counted, not fatal to the run. Verified live: created a secret
+  before rotation, rotated, created a second secret after, ran the collapse
+  command, and confirmed the pre-rotation secret moved to the new version
+  with its plaintext unchanged, the post-rotation secret was correctly
+  skipped as already-current, the audit trail recorded `reencrypt` not
+  `write`, its version history stayed a single entry, and a stale-version
+  retry returned 409.
 - **Audit-log entries are now hash-chained, so a deleted or reordered entry is
   detectable, not just a modified one.** A lone per-entry ML-DSA-65 signature
   proves a given row's content wasn't altered since signing, but has nothing to
@@ -291,6 +315,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and checks that a credential derived by the CLI helper is accepted for an
   account created in the browser. Neither the Playwright suite nor
   `test-stack.sh` covered that contract.
+- `docs/kek-operations.md`: IAM policy JSON and Terraform for provisioning the
+  AWS KMS and Azure Key Vault `KekBackend` implementations, scoped to exactly
+  the two operations each backend calls (`kms:Encrypt`/`kms:Decrypt`;
+  `wrapKey`/`unwrapKey` via the `Key Vault Crypto User` role on the specific
+  key, not the vault).
 
 ### Changed
 

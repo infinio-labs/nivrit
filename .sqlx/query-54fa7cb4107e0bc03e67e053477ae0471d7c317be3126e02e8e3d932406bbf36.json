@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        WITH upserted AS (\n            INSERT INTO secrets (project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, 1)\n            ON CONFLICT (project_id, environment_id, folder_id, key)\n            DO UPDATE SET\n                encrypted_value = EXCLUDED.encrypted_value,\n                nonce = EXCLUDED.nonce,\n                algorithm = EXCLUDED.algorithm,\n                version = secrets.version + 1,\n                updated_at = NOW()\n            RETURNING id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, created_at, updated_at\n        ),\n        versioned AS (\n            INSERT INTO secret_versions (secret_id, encrypted_value, nonce, version, algorithm)\n            SELECT id, encrypted_value, nonce, version, algorithm FROM upserted\n        )\n        SELECT * FROM upserted\n        ",
+  "query": "\n        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version, created_at, updated_at\n        FROM secrets\n        WHERE project_id = $1\n          AND ($2::uuid IS NULL OR environment_id = $2)\n          AND folder_id IS NOT DISTINCT FROM $3\n        ORDER BY key ASC\n        LIMIT $4 OFFSET $5\n        ",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,17 @@
       },
       {
         "ordinal": 9,
+        "name": "project_key_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "project_key_version"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -130,10 +141,8 @@
         "Uuid",
         "Uuid",
         "Uuid",
-        "Text",
-        "Bytea",
-        "Bytea",
-        "Text"
+        "Int8",
+        "Int8"
       ]
     },
     "nullable": [
@@ -147,8 +156,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "fe8a168e0f6b98ff8b21dd96c0311309039b82e8efb81e42ff71ab4fea6c2462"
+  "hash": "54fa7cb4107e0bc03e67e053477ae0471d7c317be3126e02e8e3d932406bbf36"
 }

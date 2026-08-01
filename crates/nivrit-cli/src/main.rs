@@ -323,6 +323,19 @@ enum Commands {
         #[arg(short, long)]
         project_id: String,
     },
+    /// Re-encrypt every secret still on an older project-key version onto the
+    /// current one (ADR 0008 addendum). Rotation alone never touches existing
+    /// ciphertext, by design -- this is the separate, explicit, opt-in pass
+    /// for an org that wants to fully retire an old key version rather than
+    /// just stop granting it. Runs client-side: each secret is decrypted
+    /// under the version it was written with and re-encrypted under the
+    /// current version, one PUT per secret. Best-effort -- a secret the
+    /// caller lacks write access to, or that changed concurrently, is
+    /// skipped and reported, not fatal to the run.
+    CollapseProjectKey {
+        #[arg(short, long)]
+        project_id: String,
+    },
     /// Manage per-environment role overrides (ADR 0009/0010): grant a
     /// project member a different role -- including `none`, no access at
     /// all -- for one specific environment, without changing their role
@@ -722,6 +735,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::RotateProjectKey { project_id } => {
             rotate_project_key(&client, &mut config, format, &project_id).await?
+        }
+        Commands::CollapseProjectKey { project_id } => {
+            collapse_project_key(&client, &config, format, &project_id).await?
         }
         Commands::EnvRole { subcommand } => match subcommand {
             EnvRoleCommands::Set {
@@ -3016,6 +3032,173 @@ async fn rotate_project_key(
             project_id: project_id.to_string(),
             version,
             granted_to: grants.len(),
+        },
+    );
+    Ok(())
+}
+
+/// Re-encrypt every secret in a project that's still on an older project-key
+/// version onto the current one (ADR 0008 addendum). Walks every environment
+/// and every folder in it (plus the root scope), decrypts each secret under
+/// whichever version it was written with, and re-encrypts under the current
+/// version. Best-effort per secret: a write the caller can't perform, or a
+/// concurrent edit that raced this pass, is skipped and counted, not fatal.
+async fn collapse_project_key(
+    client: &reqwest::Client,
+    config: &CliConfig,
+    format: OutputFormat,
+    project_id: &str,
+) -> anyhow::Result<()> {
+    let token = config
+        .token
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
+    let current_version = project_key_state(config, project_id)?.current_version;
+    let current_key = load_project_key(config, project_id)?;
+
+    let environments_res: serde_json::Value = client
+        .get(format!(
+            "{}/projects/{}/environments",
+            config.server_url, project_id
+        ))
+        .bearer_auth(token)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let environments = environments_res.as_array().ok_or_else(|| {
+        anyhow::anyhow!("expected array from GET /projects/{project_id}/environments")
+    })?;
+
+    let mut reencrypted = 0usize;
+    let mut already_current = 0usize;
+    let mut failed = 0usize;
+
+    for env in environments {
+        let environment_id = env["id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("id missing in environment entry"))?;
+
+        let folders_res: serde_json::Value = client
+            .get(format!(
+                "{}/projects/{}/folders?environment_id={}",
+                config.server_url, project_id, environment_id
+            ))
+            .bearer_auth(token)
+            .send()
+            .await?
+            .json()
+            .await?;
+        let folder_ids: Vec<Option<String>> = std::iter::once(None)
+            .chain(
+                folders_res
+                    .as_array()
+                    .ok_or_else(|| anyhow::anyhow!("expected array from GET .../folders"))?
+                    .iter()
+                    .map(|f| f["id"].as_str().map(|s| s.to_string())),
+            )
+            .collect();
+
+        for folder_id in folder_ids {
+            let secrets_url = match &folder_id {
+                Some(fid) => format!(
+                    "{}/projects/{}/secrets?environment_id={}&folder_id={}",
+                    config.server_url, project_id, environment_id, fid
+                ),
+                None => format!(
+                    "{}/projects/{}/secrets?environment_id={}",
+                    config.server_url, project_id, environment_id
+                ),
+            };
+            let secrets_res: serde_json::Value = client
+                .get(&secrets_url)
+                .bearer_auth(token)
+                .send()
+                .await?
+                .json()
+                .await?;
+            let secrets = secrets_res
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("expected array from GET .../secrets"))?;
+
+            for secret in secrets {
+                let key = secret["key"].as_str().unwrap_or("?");
+                let from_version = secret["project_key_version"].as_i64().unwrap_or(1) as i32;
+                if from_version >= current_version {
+                    already_current += 1;
+                    continue;
+                }
+
+                let reenc = (|| -> anyhow::Result<nivrit_crypto::EncryptedValue> {
+                    let encrypted_value = secret["encrypted_value"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("encrypted_value missing"))?;
+                    let nonce = secret["nonce"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("nonce missing"))?;
+                    let old_key = load_project_key_version(config, project_id, from_version)?;
+                    let ciphertext = STANDARD.decode(encrypted_value)?;
+                    let old_nonce = STANDARD.decode(nonce)?;
+                    let plaintext =
+                        nivrit_crypto::decrypt_value(&ciphertext, &old_nonce, &old_key)?;
+                    Ok(encrypt_value(&plaintext, &current_key)?)
+                })();
+                let reenc = match reenc {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("warning: skipping secret '{key}': {e}");
+                        failed += 1;
+                        continue;
+                    }
+                };
+
+                let body = serde_json::json!({
+                    "environment_id": environment_id,
+                    "folder_id": folder_id,
+                    "encrypted_value": STANDARD.encode(&reenc.ciphertext),
+                    "nonce": STANDARD.encode(&reenc.nonce),
+                    "algorithm": "aes256gcm-v1",
+                    "from_project_key_version": from_version,
+                    "to_project_key_version": current_version,
+                });
+                let put_res = client
+                    .put(format!(
+                        "{}/projects/{}/secrets/{}/reencrypt",
+                        config.server_url, project_id, key
+                    ))
+                    .bearer_auth(token)
+                    .json(&body)
+                    .send()
+                    .await?;
+                if put_res.status().is_success() {
+                    reencrypted += 1;
+                } else {
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    struct CollapseOut {
+        project_id: String,
+        target_version: i32,
+        reencrypted: usize,
+        already_current: usize,
+        failed: usize,
+    }
+    print_output(
+        format,
+        &format!(
+            "collapsed project {} onto key version {}: {} reencrypted, {} already current, {} failed",
+            project_id, current_version, reencrypted, already_current, failed
+        ),
+        &CollapseOut {
+            project_id: project_id.to_string(),
+            target_version: current_version,
+            reencrypted,
+            already_current,
+            failed,
         },
     );
     Ok(())

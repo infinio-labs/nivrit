@@ -149,6 +149,10 @@ async fn main() -> anyhow::Result<()> {
             get(handlers::secrets::list_secret_versions),
         )
         .route(
+            "/projects/{project_id}/secrets/{key}/reencrypt",
+            axum::routing::put(handlers::secrets::reencrypt_secret),
+        )
+        .route(
             "/projects/{project_id}/secrets/{key}/restore",
             post(handlers::secrets::restore_secret),
         )

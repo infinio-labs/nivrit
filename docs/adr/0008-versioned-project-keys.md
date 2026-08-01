@@ -129,3 +129,39 @@ option minus the bulk re-encrypt — but then existing ciphertext becomes
 permanently unreadable, since nothing decrypts it anymore. Rejected as
 strictly worse than versioning: same rotation cost, but destroys data instead
 of leaving it versioned and readable.
+
+## Addendum (2026-08-01): the opt-in collapse tool
+
+The "Consequences" section above named the gap on purpose: an org that wants
+to fully collapse history onto the latest version and destroy old key
+material needed "a separate, explicit, opt-in re-encryption pass (not built
+in this change)". That pass now exists: `niv collapse-project-key`.
+
+It is deliberately *not* the same code path as a normal secret write
+(`create_secret`):
+
+- **No content-version bump, no `secret_versions` row.** `create_secret`
+  upserts and archives the prior value on every call, because from its
+  caller's point of view the content changed. A collapse pass changes
+  nothing about the plaintext — only which project-key version wraps it — so
+  treating it as a content edit would misrepresent a secret's real history
+  (a re-encryption showing up as an "edit" nobody made) and would grow
+  `secret_versions` without bound on every future collapse run for no
+  reason. A dedicated `reencrypt_secret` query does an in-place `UPDATE`
+  instead.
+- **A distinct `reencrypt` audit action, not `write`.** The audit trail
+  exists so an operator can trust it describes what actually happened;
+  conflating "we rewrapped this" with "someone changed this" would make that
+  trail lie by omission.
+- **Optimistic concurrency, not last-write-wins.** The endpoint requires the
+  caller to state which version it's rewrapping *from*; if the row has since
+  moved (a real edit landed first), the update matches zero rows and the
+  caller gets `409 Conflict` instead of silently overwriting a write it
+  didn't know about.
+
+Same rationale as the base decision: this remains client-driven, one secret
+at a time, because the server never holds `project_key` plaintext to do it
+centrally. Bulk-*initiating* it is the only part that's centralized — the
+CLI walks every environment and folder in a project and issues one rewrap
+per secret still behind the current version, skipping (and counting, not
+failing on) anything it can't decrypt or write.

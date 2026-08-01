@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT em.environment_id\n        FROM environment_memberships em\n        JOIN environments e ON e.id = em.environment_id\n        WHERE e.project_id = $1 AND em.user_id = $2 AND em.role = 'none'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "environment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "environment_memberships",
+            "name": "environment_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "db364f98854ec1980d7e83292e9e848d7ae1a603ace12ed315ca008f1dd289b7"
+}

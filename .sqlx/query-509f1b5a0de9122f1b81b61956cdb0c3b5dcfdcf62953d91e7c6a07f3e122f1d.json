@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO access_logs (\n            project_id, environment_id, secret_id, user_id, action, key,\n            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key\n        )\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)\n        RETURNING\n            id, project_id, environment_id, secret_id, user_id, action, key,\n            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key\n        ",
+  "query": "\n        SELECT\n            id, project_id, environment_id, secret_id, user_id, action, key,\n            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key,\n            chain_seq, prev_hash, entry_hash\n        FROM access_logs\n        WHERE project_id = $1\n        ORDER BY created_at DESC\n        LIMIT $2\n        ",
   "describe": {
     "columns": [
       {
@@ -145,22 +145,45 @@
             "name": "signing_public_key"
           }
         }
+      },
+      {
+        "ordinal": 13,
+        "name": "chain_seq",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "access_logs",
+            "name": "chain_seq"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "prev_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "access_logs",
+            "name": "prev_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "entry_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "access_logs",
+            "name": "entry_hash"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid",
-        "Uuid",
-        "Uuid",
-        "Text",
-        "Text",
-        "Text",
-        "Text",
-        "Timestamptz",
-        "Text",
-        "Bytea",
-        "Bytea"
+        "Int8"
       ]
     },
     "nullable": [
@@ -176,8 +199,11 @@
       false,
       true,
       true,
+      true,
+      false,
+      true,
       true
     ]
   },
-  "hash": "19c298633e9bac55261d0dc789ba67a8a7589c55de95eb51c9f007b74bbe0ad0"
+  "hash": "509f1b5a0de9122f1b81b61956cdb0c3b5dcfdcf62953d91e7c6a07f3e122f1d"
 }

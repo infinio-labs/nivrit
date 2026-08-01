@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, secret_id, encrypted_value, nonce, version, algorithm, created_at\n        FROM secret_versions\n        WHERE secret_id = $1\n        ORDER BY version DESC\n        LIMIT $2 OFFSET $3\n        ",
+  "query": "\n        SELECT id, secret_id, encrypted_value, nonce, version, algorithm, project_key_version, created_at\n        FROM secret_versions\n        WHERE secret_id = $1\n        ORDER BY version DESC\n        LIMIT $2 OFFSET $3\n        ",
   "describe": {
     "columns": [
       {
@@ -71,6 +71,17 @@
       },
       {
         "ordinal": 6,
+        "name": "project_key_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "secret_versions",
+            "name": "project_key_version"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -95,8 +106,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "9d11a50efb7ac990ff545bb116da9a78507d5fc4f43d7941c36060c8525f4240"
+  "hash": "89d099a86382c38830552605dfed07bbe98b002f2b6bf75f1ed9e43fa92d11cd"
 }
