@@ -20,13 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (rotate the wrapping key, leave wrapped data alone), not a bulk
   re-encryption — the first design considered was eager re-encryption, and
   research into how those three actually handle this argued against it
-  before it shipped. Server (`nivrit-db`, `nivrit-api`), CLI, and the web UI
-  (Members tab → "Rotate key now") are wired end-to-end and verified live:
-  server + CLI across a real two-user session with a mid-flight rotation, web
-  UI via a full Playwright run (register, rotate, confirm both pre- and
-  post-rotation secrets decrypt) plus real-crypto (non-mocked WASM) unit
-  tests. Non-Rust SDKs (Node/Python/Go) are not yet updated; they keep
-  working for any project that's never been rotated.
+  before it shipped. Server (`nivrit-db`, `nivrit-api`), CLI, web UI (Members
+  tab → "Rotate key now"), and the Node SDK (`session.rotateProjectKey()`)
+  are wired end-to-end and verified live: server + CLI across a real
+  two-user session with a mid-flight rotation, web UI via a full Playwright
+  run (register, rotate, confirm both pre- and post-rotation secrets
+  decrypt) plus real-crypto (non-mocked WASM) unit tests, Node SDK via a
+  live two-user `smoke.js` run against a real API and the real
+  `nivrit-crypto-helper` subprocess. Python and Go SDKs are not yet updated;
+  they keep working for any project that's never been rotated.
 - **Audit-log entries are now hash-chained, so a deleted or reordered entry is
   detectable, not just a modified one.** A lone per-entry ML-DSA-65 signature
   proves a given row's content wasn't altered since signing, but has nothing to

@@ -353,13 +353,16 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
    the wrapping key, leave wrapped data alone), not the eager bulk-re-encrypt design
    this finding originally implied was needed — research done as part of fixing this
    specifically argued against that approach. Server (`nivrit-db`, `nivrit-api`), CLI,
-   and the web UI are wired end-to-end and verified live: server + CLI across a real
-   two-user session with a mid-flight rotation, web UI via a full Playwright run
-   (register, rotate, confirm both pre- and post-rotation secrets decrypt) plus
-   real-crypto (non-mocked WASM) unit tests. Getting that Playwright run to pass
+   web UI, and the Node SDK are wired end-to-end and verified live: server + CLI
+   across a real two-user session with a mid-flight rotation, web UI via a full
+   Playwright run (register, rotate, confirm both pre- and post-rotation secrets
+   decrypt) plus real-crypto (non-mocked WASM) unit tests, Node SDK via a live
+   two-user `smoke.js` run against a real API and the real `nivrit-crypto-helper`
+   subprocess (invite, rotate, confirm the invited-before-rotation member decrypts
+   both pre- and post-rotation secrets). Getting the web UI's Playwright run to pass
    surfaced a real, separate bug — see §9.5 below — not something worth burying in
-   this bullet. Non-Rust SDKs (Node/Python/Go) are not yet updated —
-   see ADR 0008's consequences section. (§5)
+   this bullet. Python and Go SDKs are not yet updated — see ADR 0008's
+   consequences section. (§5)
 5. **RBAC is flat and project-scoped only**, despite `Environment` and `Folder`
    already existing as addressable models — no way to grant environment- or
    folder-level permissions today. A real gap versus Vault, Infisical, and Doppler.

@@ -135,6 +135,46 @@ class NivritClient {
   createPat(body) {
     return this.request('/auth/pat', { method: 'POST', body: JSON.stringify(body) });
   }
+
+  /** Look up a user's public key by email, to encapsulate a project key to
+   * them (invite, or a rotation grant). Requires Member+ on `projectId`. */
+  getPublicKey(email, projectId) {
+    return this.request(
+      `/users/public-key?email=${encodeURIComponent(email)}&project_id=${encodeURIComponent(projectId)}`
+    );
+  }
+
+  // Versioned project keys (ADR 0008)
+
+  /** Current members of a project and the public key a rotation grant should
+   * be encapsulated to. */
+  listMembers(projectId) {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/members`);
+  }
+
+  inviteMember(projectId, body) {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/members`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Every project-key version the caller has been granted, oldest first --
+   * what's needed to decrypt the project's full secret history, not just
+   * what's current. */
+  listKeyVersions(projectId) {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/key-versions`);
+  }
+
+  /** Mint the next project-key version, granted to exactly the supplied
+   * roster. The server independently verifies the roster matches current
+   * membership. */
+  rotateKey(projectId, body) {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/rotate-key`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
 }
 
 module.exports = { NivritClient };
