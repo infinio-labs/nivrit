@@ -1,3 +1,5 @@
+import type { Environment } from '../api';
+import { EnvironmentRolesCard } from './EnvironmentRolesCard';
 import { KeyRound, Mail, ShieldCheck, UserPlus, Users } from './icons';
 import { Button, Card, CardHeader, EmptyState, Input, Label, Select } from './ui';
 
@@ -10,6 +12,9 @@ interface MembersTabProps {
   onInvite: (e: React.FormEvent) => void;
   onRotateKey: () => void;
   rotatingKey: boolean;
+  environments: Environment[];
+  selectedEnvironmentId: string;
+  onError: (message: string) => void;
 }
 
 const roles = [
@@ -136,6 +141,15 @@ export function MembersTab(props: MembersTabProps) {
             </Button>
           </div>
         </Card>
+      )}
+
+      {props.selectedProjectId && (
+        <EnvironmentRolesCard
+          projectId={props.selectedProjectId}
+          environments={props.environments}
+          selectedEnvironmentId={props.selectedEnvironmentId}
+          onError={props.onError}
+        />
       )}
     </div>
   );

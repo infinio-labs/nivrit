@@ -585,6 +585,68 @@ export async function rotateProjectKey(
   return res.json();
 }
 
+// Environment-scoped RBAC overrides (ADR 0009/0010)
+
+export type EnvironmentRole = 'admin' | 'member' | 'viewer' | 'none';
+
+export interface EnvironmentOverride {
+  user_id: string;
+  environment_id: string;
+  role: EnvironmentRole;
+}
+
+/** Every role override on one environment. Any project member can view --
+ * knowing who has elevated or restricted access isn't itself sensitive. */
+export async function listEnvironmentOverrides(
+  token: string,
+  projectId: string,
+  environmentId: string
+): Promise<EnvironmentOverride[]> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/environments/${environmentId}/members`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw await failure(res, 'could not list environment overrides');
+  return res.json();
+}
+
+/** Grant (or replace) a project member's role override for one environment.
+ * Admin-only; the target must already be a project member. `role: 'none'`
+ * denies the environment outright rather than substituting a different role. */
+export async function setEnvironmentOverride(
+  token: string,
+  projectId: string,
+  environmentId: string,
+  userId: string,
+  role: EnvironmentRole
+): Promise<EnvironmentOverride> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/environments/${environmentId}/members/${userId}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ role }),
+    }
+  );
+  if (!res.ok) throw await failure(res, 'could not set environment override');
+  return res.json();
+}
+
+/** Remove a role override, reverting the user to their project-level role
+ * for that environment. Admin-only. */
+export async function removeEnvironmentOverride(
+  token: string,
+  projectId: string,
+  environmentId: string,
+  userId: string
+): Promise<void> {
+  const res = await fetch(
+    `${API_URL}/projects/${projectId}/environments/${environmentId}/members/${userId}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw await failure(res, 'could not remove environment override');
+}
+
 
 // Personal access tokens
 //

@@ -2,7 +2,7 @@
 
 **Project:** Nivrit (client-side end-to-end encrypted secret manager)  
 **Path:** `/home/sid/Projects/InfinioLabs/nivrit`  
-**Last updated:** 2026-08-01 (environment-scoped RBAC read-gating, ADR 0010)
+**Last updated:** 2026-08-01 (environment-scoped RBAC: web UI + CLI management, ADR 0009/0010)
 
 This document captures the implementation progress across all roadmap phases, testing, tooling, and dependency hygiene.
 
@@ -32,7 +32,7 @@ This document captures the implementation progress across all roadmap phases, te
 | Secret CRUD completeness | ✅ Done | `list_secrets`, `delete_secret`, `list_projects`, and `list_environments` endpoints; CLI and web dashboard updated. `delete_secret` returns `NotFound` when the key is absent and captures the deleted `secret_id` for the audit trail. |
 | Key rotation authorization | ✅ Done | `POST /users/me/rotate-key` verifies project membership + `Member` role for each rotated membership key before updating it. |
 | Versioned project-key rotation | ✅ Done | `POST /projects/{id}/rotate-key` mints the next version of a project's symmetric key and grants it only to current members (`project_key_versions`/`project_key_grants` tables); `GET /projects/{id}/key-versions` and `GET /projects/{id}/members` support it. No existing secret is touched — matches the NIST/AWS KMS/Vault envelope-rotation pattern rather than bulk re-encryption. Server, CLI (`niv rotate-project-key`), web UI (Members tab, "Rotate key now"), and the Node SDK (`session.rotateProjectKey()`) are wired; Python/Go not yet (see §5). See [ADR 0008](adr/0008-versioned-project-keys.md). |
-| Environment-scoped RBAC | ✅ Done | `environment_memberships` table holds optional per-user, per-environment role overrides that supersede the project-level role for that environment only; absent means the project role applies unchanged. `GET/PUT/DELETE /projects/{id}/environments/{env_id}/members[/{user_id}]` manage overrides (PUT/DELETE require project Admin; target must already be a project member). All 6 secret handlers (3 write: `create_secret`/`delete_secret`/`restore_secret`; 3 read: `list_secrets`/`get_secret`/`list_secret_versions`) are gated through `require_environment_role`. A 4th role tier, `none` (rank 0, below Viewer), makes the read gate meaningful — it's the only way an override can *deny* rather than just grant, since every member already outranks Viewer. `none` is override-only; rejected as a project/org role. Server only — no CLI/web/SDK management UI yet (see §5). See [ADR 0009](adr/0009-environment-scoped-rbac.md) and [ADR 0010](adr/0010-none-role-for-read-gating.md). |
+| Environment-scoped RBAC | ✅ Done | `environment_memberships` table holds optional per-user, per-environment role overrides that supersede the project-level role for that environment only; absent means the project role applies unchanged. `GET/PUT/DELETE /projects/{id}/environments/{env_id}/members[/{user_id}]` manage overrides (PUT/DELETE require project Admin; target must already be a project member). All 6 secret handlers (3 write: `create_secret`/`delete_secret`/`restore_secret`; 3 read: `list_secrets`/`get_secret`/`list_secret_versions`) are gated through `require_environment_role`. A 4th role tier, `none` (rank 0, below Viewer), makes the read gate meaningful — it's the only way an override can *deny* rather than just grant, since every member already outranks Viewer. `none` is override-only; rejected as a project/org role. CLI (`niv env-role set/list/remove`) and web UI (Members tab → "Environment access") manage overrides end-to-end. See [ADR 0009](adr/0009-environment-scoped-rbac.md) and [ADR 0010](adr/0010-none-role-for-read-gating.md). |
 
 ### Phase 1 — Transport-level PQC ✅
 
@@ -191,7 +191,6 @@ All commands currently pass.
    been rotated. After a rotation, those clients can still read anything from
    that point forward but not pre-rotation history. See ADR 0008's consequences
    section.
-5. **Environment RBAC overrides have no web UI management surface.** The server enforces overrides, including the `none` (no access) tier (see the feature table above, [ADR 0009](adr/0009-environment-scoped-rbac.md), [ADR 0010](adr/0010-none-role-for-read-gating.md)). CLI is wired (`niv env-role set/list/remove`); the web dashboard is not.
 
 ---
 

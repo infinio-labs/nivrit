@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
             // Pin to the methods/headers the API actually uses rather than `Any`.
             CorsLayer::new()
                 .allow_origin(allowed)
-                .allow_methods([Method::GET, Method::POST, Method::DELETE])
+                .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
                 .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
         }
         None => {

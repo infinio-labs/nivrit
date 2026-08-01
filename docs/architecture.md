@@ -204,8 +204,9 @@ which is what lets an account created in the browser log in from the CLI.
   member's role for one environment, superseding the project-level role there, on
   both the write and read paths; a 4th `none` tier lets an override deny an
   environment outright, not just substitute a different role. Folders inherit their
-  environment's role rather than getting independent scoping. CLI is wired
-  (`niv env-role set/list/remove`); a web dashboard surface remains open (`docs/progress.md` §5).
+  environment's role rather than getting independent scoping. CLI (`niv env-role
+  set/list/remove`) and web UI (Members tab → "Environment access") both manage
+  overrides.
 - ✅ Post-quantum signatures (ML-DSA-65) for audit-log non-repudiation, hash-chained
   so deletion and reordering are detectable, not just per-entry content tampering.
 - ✅ HSM/KMS-backed key-encryption keys (AWS KMS, Azure Key Vault).

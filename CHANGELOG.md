@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against a real two-user session: set a Member override, list it, set it to
   `none` and confirm the second user's `list-secrets` on that environment
   now fails, remove the override, confirm project-level access returns.
+- **The web dashboard's Members tab now manages environment RBAC overrides
+  too.** A new "Environment access" card on the currently-selected
+  environment lets a project Admin set (including `role: none`), list, and
+  remove overrides by email, using the same endpoints as the CLI. Verified
+  with a full Playwright run against a real API and browser.
 - **Project keys can now be rotated.** Previously `POST /users/me/rotate-key`
   only re-wrapped a project's *existing* symmetric key to a user's new
   personal keypair — there was no way to actually replace it, so a removed
@@ -165,6 +170,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CORS rejected `PUT` requests, so the browser could never actually reach the
+  environment-override endpoints once `NIVRIT_CORS_ORIGIN` was set (the
+  production configuration).** `allow_methods` was hardcoded to
+  `[GET, POST, DELETE]` from before any `PUT` route existed; the new
+  `PUT /projects/{id}/environments/{env_id}/members/{user_id}` endpoint compiled
+  and worked from `curl` or the CLI, but a real browser's CORS preflight
+  silently blocked it — no server-side error, just a swallowed network
+  failure in the console. Found by running the web UI's environment-override
+  scenario through a real Chromium instance with `NIVRIT_CORS_ORIGIN` set (the
+  default, unrestricted-CORS dev mode doesn't preflight-check methods, so unit
+  tests and a bare `cargo run` couldn't have caught it). Added `Method::PUT` to
+  the allowlist.
 - **A message sent to the crypto Web Worker immediately after creating it
   could be silently dropped, hanging login/register/reset-password forever
   with no error anywhere.** `new Worker(url, {type: 'module'})` returns before

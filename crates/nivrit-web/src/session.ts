@@ -34,6 +34,9 @@ import {
   listProjectMembers,
   listProjectKeyVersions,
   rotateProjectKey,
+  listEnvironmentOverrides,
+  setEnvironmentOverride,
+  removeEnvironmentOverride,
   login,
   loginTotp,
   oauthCallback,
@@ -60,6 +63,8 @@ import {
   type PatMetadata,
   type SecretImport,
   type SecretVersion,
+  type EnvironmentOverride,
+  type EnvironmentRole,
 } from './api';
 import { assertAcceptablePassword } from './password-policy';
 
@@ -603,6 +608,39 @@ export async function rotateProjectKeySession(
   s.projects.set(projectId, { currentVersion: result.version, versions });
 
   return { version: result.version, grantedTo: grants.length };
+}
+
+// Environment-scoped RBAC overrides (ADR 0009/0010). Pure authorization --
+// no project-key material is involved, unlike invite/rotate above.
+
+export async function listEnvironmentOverridesSession(
+  projectId: string,
+  environmentId: string
+): Promise<EnvironmentOverride[]> {
+  return listEnvironmentOverrides(getSessionOrThrow().token, projectId, environmentId);
+}
+
+/** Grant (or replace) a member's role override for one environment, resolving
+ * the target by email the same way an invite does. `role: 'none'` denies the
+ * environment outright. */
+export async function setEnvironmentOverrideSession(
+  projectId: string,
+  environmentId: string,
+  email: string,
+  role: EnvironmentRole
+): Promise<EnvironmentOverride> {
+  const s = getSessionOrThrow();
+  const target = await getPublicKey(s.token, email, projectId);
+  return setEnvironmentOverride(s.token, projectId, environmentId, target.id, role);
+}
+
+export async function removeEnvironmentOverrideSession(
+  projectId: string,
+  environmentId: string,
+  userId: string
+): Promise<void> {
+  const s = getSessionOrThrow();
+  await removeEnvironmentOverride(s.token, projectId, environmentId, userId);
 }
 
 function getSessionOrThrow(): Session {

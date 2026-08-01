@@ -331,9 +331,10 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
 
 > **Status as of 2026-08-01:** items 1–6 are all fixed (see commit history and the
 > `[Unreleased]` section of `CHANGELOG.md`). Item 5 (RBAC granularity) was resolved
-> as per-environment role overrides (ADR 0009) after a product decision on the
-> resource-scoping shape; server-side enforcement is done, CLI/web/SDK management
-> UI is not. See `docs/progress.md` §5 for current status.
+> as per-environment role overrides (ADR 0009/0010) after a product decision on
+> the resource-scoping shape; server enforcement, CLI, and web UI are all wired.
+> Python/Go SDK support for versioned project keys (a separate, ADR 0008 gap)
+> remains open. See `docs/progress.md` §5 for current status.
 
 1. ~~**Audit-log signing is silently optional.**~~ **Fixed.** `Config::validate()` now
    requires either a real `NIVRIT_SIGNING_KEY_SEED` or an explicit
@@ -374,8 +375,9 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
    getting an independent scope (see [ADR 0009](adr/0009-environment-scoped-rbac.md)'s
    rejected-alternatives section for why folder-level and dual-scoped were
    passed over). A `none` role tier ([ADR 0010](adr/0010-none-role-for-read-gating.md))
-   gives the read gate a floor below `Viewer` to actually deny with. Server-side
-   only — CLI/web management UI remains open, tracked in `docs/progress.md` §5. (§7)
+   gives the read gate a floor below `Viewer` to actually deny with. `niv
+   env-role set/list/remove` and the web dashboard's Members tab both manage
+   overrides. (§7)
 6. ~~**The login rate limiter's IP bucket has a shared-address blast radius.**~~
    **Fixed.** IP-scoped buckets (`login-ip|`, `totp-login-ip|`, `forgot-password-ip|`)
    now use a separate, more permissive limiter (30 attempts/15min vs. 5) than the
@@ -447,7 +449,7 @@ This document is a design-decision review, not a penetration test or formal veri
 
 ## 11. Conclusion
 
-Nivrit's core cryptographic architecture — split-derivation authentication, hybrid post-quantum key exchange, crypto-agile symmetric encryption — holds up well against current standards and academic literature, in several places more rigorously than the project's own documentation gave it credit for (the Argon2id/pepper design in particular is stronger, and better-cited, than its own code comments claimed before this review corrected them). The most consequential findings from this review were operational rather than cryptographic: audit-log signing that silently disabled itself, audit-log signatures that didn't protect against deletion, and a project key with no rotation path were all fixable without touching the cryptographic core, and have since been fixed (§9.1) — the audit-log chain verified live against a real row deletion, the project-key rotation verified live across a real two-user session with a mid-flight rotation, not just unit tests in either case. They mattered more in practice than the theoretical maturity gap already tracked in ADR 0007. Building the rotation fix surfaced a second lesson worth naming: the first design considered for it (eager bulk re-encryption) was wrong, and research into how NIST, AWS, and HashiCorp actually handle this class of problem is what caught that before it shipped — worth remembering next time a "safety" fix is being designed under the assumption that touching more data is the safer choice. The RBAC granularity gap was a legitimate product decision rather than a defect fixable by a mechanical patch — it stayed open on purpose until the resource-scoping shape was decided (per-environment, ADR 0009), because shipping the wrong shape under time pressure would have cost more than the gap itself did at the time. What's left (CLI/web/SDK management surface) is tracked in `docs/progress.md` §5. The licensing trade-off (§8) was never a defect to begin with, just a nuance worth stating plainly instead of implying more than the license actually guarantees.
+Nivrit's core cryptographic architecture — split-derivation authentication, hybrid post-quantum key exchange, crypto-agile symmetric encryption — holds up well against current standards and academic literature, in several places more rigorously than the project's own documentation gave it credit for (the Argon2id/pepper design in particular is stronger, and better-cited, than its own code comments claimed before this review corrected them). The most consequential findings from this review were operational rather than cryptographic: audit-log signing that silently disabled itself, audit-log signatures that didn't protect against deletion, and a project key with no rotation path were all fixable without touching the cryptographic core, and have since been fixed (§9.1) — the audit-log chain verified live against a real row deletion, the project-key rotation verified live across a real two-user session with a mid-flight rotation, not just unit tests in either case. They mattered more in practice than the theoretical maturity gap already tracked in ADR 0007. Building the rotation fix surfaced a second lesson worth naming: the first design considered for it (eager bulk re-encryption) was wrong, and research into how NIST, AWS, and HashiCorp actually handle this class of problem is what caught that before it shipped — worth remembering next time a "safety" fix is being designed under the assumption that touching more data is the safer choice. The RBAC granularity gap was a legitimate product decision rather than a defect fixable by a mechanical patch — it stayed open on purpose until the resource-scoping shape was decided (per-environment, ADR 0009), because shipping the wrong shape under time pressure would have cost more than the gap itself did at the time. CLI and web UI management surfaces for it now both exist. The licensing trade-off (§8) was never a defect to begin with, just a nuance worth stating plainly instead of implying more than the license actually guarantees.
 
 ---
 

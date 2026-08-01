@@ -171,6 +171,37 @@ test('register, store a secret, and read it back through the UI', async ({ page 
   await page.getByRole('button', { name: 'Show' }).nth(1).click();
   await expect(page.getByText('sk-after-rotation')).toBeVisible();
 
+  // --- environment RBAC overrides (ADR 0009/0010) ---------------------------
+  // Set an override on the currently-selected environment (Prod), confirm it
+  // shows up in the list with the right role badge, then remove it and
+  // confirm the list goes back to empty. Targets this account itself (the
+  // only project member available in a single-session smoke test) -- the
+  // authz enforcement itself is covered by the Rust integration tests and a
+  // live two-user script, not re-proven here; this only proves the UI calls
+  // the right endpoints and renders what comes back.
+  await page.getByRole('button', { name: 'Members' }).click();
+  await expect(page.getByRole('heading', { name: 'Members', exact: true })).toBeVisible();
+
+  await page.getByTestId('env-role-email-input').fill(EMAIL);
+  await page.getByTestId('env-role-select').selectOption({ label: 'Viewer' });
+  await page.getByTestId('env-role-set-btn').click();
+
+  const overrideBadge = page.getByText('viewer', { exact: true });
+  await expect(overrideBadge).toBeVisible({ timeout: 15_000 });
+
+  await page.getByTestId(/env-role-remove-/).click();
+  await expect(
+    page.getByText('No overrides on this environment -- every member uses their project-level role.')
+  ).toBeVisible({ timeout: 15_000 });
+
+  // A 'none' override must be settable too -- it's the tier below Viewer that
+  // gives an override the ability to deny, not just grant.
+  await page.getByTestId('env-role-email-input').fill(EMAIL);
+  await page.getByTestId('env-role-select').selectOption({ label: 'None' });
+  await page.getByTestId('env-role-set-btn').click();
+  await expect(page.getByText('none', { exact: true })).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId(/env-role-remove-/).click();
+
   // A React error would otherwise be invisible: the boundary renders a fallback
   // and the test would carry on past a broken page.
   expect(failures, `browser reported errors:\n${failures.join('\n')}`).toEqual([]);

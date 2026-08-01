@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, vi, test } from 'vitest';
 import {
   SessionExpiredError,
   getSecret,
+  listEnvironmentOverrides,
   listProjectKeyVersions,
   listProjectMembers,
   login,
+  removeEnvironmentOverride,
   rotateProjectKey,
+  setEnvironmentOverride,
   setSecret,
 } from './api';
 
@@ -303,5 +306,79 @@ describe('rotateProjectKey', () => {
     ) as unknown as typeof globalThis.fetch;
 
     await expect(rotateProjectKey('token', 'project', [])).rejects.toThrow('roster mismatch');
+  });
+});
+
+describe('environment role overrides', () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test('listEnvironmentOverrides returns the roster', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify([{ user_id: 'u1', environment_id: 'env1', role: 'member' }]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    ) as unknown as typeof globalThis.fetch;
+
+    const overrides = await listEnvironmentOverrides('token', 'project', 'env1');
+    expect(overrides).toEqual([{ user_id: 'u1', environment_id: 'env1', role: 'member' }]);
+
+    const [url] = (globalThis.fetch as any).mock.calls[0];
+    expect(url).toContain('/projects/project/environments/env1/members');
+  });
+
+  test('setEnvironmentOverride PUTs the role, including none', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ user_id: 'u1', environment_id: 'env1', role: 'none' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    ) as unknown as typeof globalThis.fetch;
+
+    const result = await setEnvironmentOverride('token', 'project', 'env1', 'u1', 'none');
+    expect(result.role).toBe('none');
+
+    const [url, init] = (globalThis.fetch as any).mock.calls[0];
+    expect(url).toContain('/projects/project/environments/env1/members/u1');
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body)).toEqual({ role: 'none' });
+  });
+
+  test('setEnvironmentOverride throws when the target is not a project member', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'target user is not a member of this project' }), {
+          status: 400,
+        })
+      )
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(
+      setEnvironmentOverride('token', 'project', 'env1', 'u1', 'member')
+    ).rejects.toThrow('not a member');
+  });
+
+  test('removeEnvironmentOverride DELETEs the override', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 204 }))
+    ) as unknown as typeof globalThis.fetch;
+
+    await removeEnvironmentOverride('token', 'project', 'env1', 'u1');
+
+    const [url, init] = (globalThis.fetch as any).mock.calls[0];
+    expect(url).toContain('/projects/project/environments/env1/members/u1');
+    expect(init.method).toBe('DELETE');
   });
 });

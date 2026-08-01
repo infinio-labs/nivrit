@@ -911,6 +911,9 @@ function App() {
               onInvite={handleInvite}
               onRotateKey={handleRotateProjectKey}
               rotatingKey={rotatingKey}
+              environments={environments}
+              selectedEnvironmentId={selectedEnvironmentId}
+              onError={(m) => showToast(m, 'error')}
             />
           )}
           {activeTab === 'audit' && (
