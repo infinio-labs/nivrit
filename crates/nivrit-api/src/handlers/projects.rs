@@ -84,6 +84,19 @@ pub async fn create_project(
         &req.project_key_algorithm,
     )
     .await?;
+    // Mints the project's key version 1 (ADR 0008). Same bytes as the
+    // membership row above -- `add_project_member` is the legacy "current
+    // key" cache older clients still read, this is the versioned history a
+    // rotation-aware client needs.
+    queries::mint_initial_project_key_version(
+        &state.db,
+        row.id,
+        user.id,
+        &encrypted_project_key,
+        &project_key_nonce,
+        &req.project_key_algorithm,
+    )
+    .await?;
 
     Ok(Json(ProjectResponse {
         id: row.id.to_string(),
@@ -189,6 +202,18 @@ pub async fn invite_member(
         &req.encrypted_project_key.suite,
     )
     .await?;
+    // Grants the invitee the project's *current latest* key version (ADR
+    // 0008), not a fixed version 1 -- an invite after a rotation must not
+    // hand out an old, superseded key.
+    queries::grant_latest_project_key_version(
+        &state.db,
+        project_id,
+        invitee.id,
+        &encrypted_project_key,
+        &[],
+        &req.encrypted_project_key.suite,
+    )
+    .await?;
 
     // Ensure the invitee can also see the parent organization in the UI. Grant
     // the lowest org role only — a project admin must not be able to mint org
@@ -200,6 +225,147 @@ pub async fn invite_member(
         user_id: invitee.id.to_string(),
         project_id: project_id.to_string(),
         role: role_as_str(req.role).to_string(),
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectMemberKeyResponse {
+    pub user_id: String,
+    pub public_key: String,
+}
+
+/// The roster a client needs before it can rotate: every current member and
+/// the public key a new grant must be encapsulated to. Anyone in the project
+/// can list it (needed to *see* who'd be affected), but only an Admin can
+/// actually call `rotate_key` below.
+pub async fn list_members(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    axum::extract::Path(project_id): axum::extract::Path<Uuid>,
+) -> ApiResult<Json<Vec<ProjectMemberKeyResponse>>> {
+    require_project_member(&state.db, project_id, user.id).await?;
+
+    let rows = queries::list_current_project_members_with_keys(&state.db, project_id).await?;
+
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| ProjectMemberKeyResponse {
+                user_id: row.user_id.to_string(),
+                public_key: STANDARD.encode(&row.public_key),
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectKeyVersionResponse {
+    pub version: i32,
+    pub encrypted_project_key: String,
+    pub project_key_nonce: String,
+    pub project_key_algorithm: String,
+}
+
+/// Every project-key version the caller has been granted, oldest first --
+/// what a rotation-aware client needs to decrypt the project's full secret
+/// history, not just what's current (ADR 0008).
+pub async fn list_my_key_versions(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    axum::extract::Path(project_id): axum::extract::Path<Uuid>,
+) -> ApiResult<Json<Vec<ProjectKeyVersionResponse>>> {
+    require_project_member(&state.db, project_id, user.id).await?;
+
+    let rows = queries::list_project_key_grants_for_user(&state.db, project_id, user.id).await?;
+
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| ProjectKeyVersionResponse {
+                version: row.version,
+                encrypted_project_key: STANDARD.encode(&row.encrypted_project_key),
+                project_key_nonce: STANDARD.encode(&row.project_key_nonce),
+                project_key_algorithm: row.project_key_algorithm,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RotateProjectKeyGrantRequest {
+    pub user_id: Uuid,
+    pub encrypted_project_key: String,
+    pub project_key_nonce: String,
+    pub project_key_algorithm: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RotateProjectKeyRequest {
+    pub grants: Vec<RotateProjectKeyGrantRequest>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RotateProjectKeyResponse {
+    pub version: i32,
+}
+
+/// Mint the next project-key version and grant it to exactly the caller's
+/// supplied roster (ADR 0008). The caller (any Admin) is responsible for
+/// generating the new key client-side, encapsulating it to every current
+/// member's public key (see `list_members` above), and never generating the
+/// server-side -- this server never sees plaintext key material, only already
+/// -encapsulated grants. `queries::rotate_project_key` independently verifies
+/// the grant list covers exactly the project's real current membership before
+/// committing, so a stale or tampered roster is rejected rather than silently
+/// locking someone out or leaving someone ungranted.
+///
+/// No existing secret is touched. Older ciphertext stays under whichever
+/// version encrypted it; only new writes use the version minted here.
+pub async fn rotate_key(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    axum::extract::Path(project_id): axum::extract::Path<Uuid>,
+    Json(req): Json<RotateProjectKeyRequest>,
+) -> ApiResult<Json<RotateProjectKeyResponse>> {
+    let membership = require_project_member(&state.db, project_id, user.id).await?;
+    require_role(&membership, Role::Admin)?;
+
+    if req.grants.is_empty() {
+        return Err(NivritError::Validation("grants required".into()).into());
+    }
+
+    let mut decoded = Vec::with_capacity(req.grants.len());
+    for grant in &req.grants {
+        let encrypted_project_key = STANDARD
+            .decode(&grant.encrypted_project_key)
+            .map_err(|e| NivritError::Validation(format!("invalid encrypted_project_key: {e}")))?;
+        let project_key_nonce = STANDARD
+            .decode(&grant.project_key_nonce)
+            .map_err(|e| NivritError::Validation(format!("invalid project_key_nonce: {e}")))?;
+        decoded.push((
+            grant.user_id,
+            encrypted_project_key,
+            project_key_nonce,
+            grant.project_key_algorithm.clone(),
+        ));
+    }
+
+    let grants: Vec<queries::RotationGrant> = decoded
+        .iter()
+        .map(
+            |(user_id, encrypted_project_key, project_key_nonce, project_key_algorithm)| {
+                queries::RotationGrant {
+                    user_id: *user_id,
+                    encrypted_project_key,
+                    project_key_nonce,
+                    project_key_algorithm,
+                }
+            },
+        )
+        .collect();
+
+    let pkv = queries::rotate_project_key(&state.db, project_id, user.id, &grants).await?;
+
+    Ok(Json(RotateProjectKeyResponse {
+        version: pkv.version,
     }))
 }
 

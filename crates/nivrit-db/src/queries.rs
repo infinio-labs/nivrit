@@ -378,6 +378,238 @@ pub async fn add_project_member(
     Ok(())
 }
 
+/// Mint version 1 of a project's key and grant it to its creator, in one
+/// transaction. Called once, right after `create_project` + the creator's
+/// `add_project_member` row.
+pub async fn mint_initial_project_key_version(
+    pool: &DbPool,
+    project_id: Uuid,
+    created_by: Uuid,
+    encrypted_project_key: &[u8],
+    project_key_nonce: &[u8],
+    project_key_algorithm: &str,
+) -> Result<ProjectKeyVersionRow> {
+    let mut tx = pool.inner().begin().await.map_err(map_db_error)?;
+
+    let pkv = sqlx::query_as!(
+        ProjectKeyVersionRow,
+        r#"
+        INSERT INTO project_key_versions (project_id, version, created_by)
+        VALUES ($1, 1, $2)
+        RETURNING id, project_id, version, created_at, created_by
+        "#,
+        project_id,
+        created_by
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(map_db_error)?;
+
+    sqlx::query!(
+        r#"
+        INSERT INTO project_key_grants (project_key_version_id, user_id, encrypted_project_key, project_key_nonce, project_key_algorithm)
+        VALUES ($1, $2, $3, $4, $5)
+        "#,
+        pkv.id,
+        created_by,
+        encrypted_project_key,
+        project_key_nonce,
+        project_key_algorithm
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(map_db_error)?;
+
+    tx.commit().await.map_err(map_db_error)?;
+    Ok(pkv)
+}
+
+/// Grant an invited member the project's *current* latest key version. Returns
+/// the version number granted, so the caller can tell the invitee which
+/// version their wrap corresponds to.
+pub async fn grant_latest_project_key_version(
+    pool: &DbPool,
+    project_id: Uuid,
+    user_id: Uuid,
+    encrypted_project_key: &[u8],
+    project_key_nonce: &[u8],
+    project_key_algorithm: &str,
+) -> Result<i32> {
+    let mut tx = pool.inner().begin().await.map_err(map_db_error)?;
+
+    let pkv = sqlx::query!(
+        r#"
+        SELECT id, version FROM project_key_versions
+        WHERE project_id = $1
+        ORDER BY version DESC
+        LIMIT 1
+        "#,
+        project_id
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(map_db_error)?;
+
+    sqlx::query!(
+        r#"
+        INSERT INTO project_key_grants (project_key_version_id, user_id, encrypted_project_key, project_key_nonce, project_key_algorithm)
+        VALUES ($1, $2, $3, $4, $5)
+        "#,
+        pkv.id,
+        user_id,
+        encrypted_project_key,
+        project_key_nonce,
+        project_key_algorithm
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(map_db_error)?;
+
+    tx.commit().await.map_err(map_db_error)?;
+    Ok(pkv.version)
+}
+
+/// Every project-key version a user has ever been granted, oldest first --
+/// what a client needs to decrypt a project's full secret history, not just
+/// what's current.
+pub async fn list_project_key_grants_for_user(
+    pool: &DbPool,
+    project_id: Uuid,
+    user_id: Uuid,
+) -> Result<Vec<ProjectKeyGrantRow>> {
+    sqlx::query_as!(
+        ProjectKeyGrantRow,
+        r#"
+        SELECT pkv.version, pkg.encrypted_project_key, pkg.project_key_nonce, pkg.project_key_algorithm, pkg.created_at
+        FROM project_key_grants pkg
+        JOIN project_key_versions pkv ON pkv.id = pkg.project_key_version_id
+        WHERE pkv.project_id = $1 AND pkg.user_id = $2
+        ORDER BY pkv.version ASC
+        "#,
+        project_id,
+        user_id
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(map_db_error)
+}
+
+/// Current members of a project and the public key a rotation grant should be
+/// encapsulated to -- the roster a client needs before it can rotate.
+pub async fn list_current_project_members_with_keys(
+    pool: &DbPool,
+    project_id: Uuid,
+) -> Result<Vec<ProjectMemberKeyRow>> {
+    sqlx::query_as!(
+        ProjectMemberKeyRow,
+        r#"
+        SELECT pm.user_id, u.public_key
+        FROM project_memberships pm
+        JOIN users u ON u.id = pm.user_id
+        WHERE pm.project_id = $1
+        "#,
+        project_id
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(map_db_error)
+}
+
+/// One grant to include when rotating: who, and their new envelope wrap.
+pub struct RotationGrant<'a> {
+    pub user_id: Uuid,
+    pub encrypted_project_key: &'a [u8],
+    pub project_key_nonce: &'a [u8],
+    pub project_key_algorithm: &'a str,
+}
+
+/// Mint the next project-key version and grant it to exactly the given set of
+/// members -- no more, no fewer than who is actually a current member right
+/// now, checked inside the same transaction as the mint to close the race
+/// window against a concurrent membership change. No existing secret is
+/// touched (ADR 0008): this only ever adds a version and some grants.
+pub async fn rotate_project_key(
+    pool: &DbPool,
+    project_id: Uuid,
+    rotated_by: Uuid,
+    grants: &[RotationGrant<'_>],
+) -> Result<ProjectKeyVersionRow> {
+    let mut tx = pool.inner().begin().await.map_err(map_db_error)?;
+
+    let mut current_members: Vec<Uuid> = sqlx::query_scalar!(
+        "SELECT user_id FROM project_memberships WHERE project_id = $1",
+        project_id
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(map_db_error)?;
+    current_members.sort();
+
+    let mut granted: Vec<Uuid> = grants.iter().map(|g| g.user_id).collect();
+    granted.sort();
+
+    if granted != current_members {
+        return Err(NivritError::Validation(
+            "rotation grants must cover exactly the project's current members".into(),
+        ));
+    }
+
+    let pkv = sqlx::query_as!(
+        ProjectKeyVersionRow,
+        r#"
+        INSERT INTO project_key_versions (project_id, version, created_by)
+        SELECT $1, COALESCE(MAX(version), 0) + 1, $2
+        FROM project_key_versions WHERE project_id = $1
+        RETURNING id, project_id, version, created_at, created_by
+        "#,
+        project_id,
+        rotated_by
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(map_db_error)?;
+
+    for grant in grants {
+        sqlx::query!(
+            r#"
+            INSERT INTO project_key_grants (project_key_version_id, user_id, encrypted_project_key, project_key_nonce, project_key_algorithm)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+            pkv.id,
+            grant.user_id,
+            grant.encrypted_project_key,
+            grant.project_key_nonce,
+            grant.project_key_algorithm
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+
+        // Keep project_memberships' flat fields as a "latest version" cache,
+        // so clients that only know the pre-rotation single-key shape (web
+        // UI, non-Rust SDKs -- see ADR 0008) keep working for anything from
+        // this point forward; they just can't reach pre-rotation history.
+        sqlx::query!(
+            r#"
+            UPDATE project_memberships
+            SET encrypted_project_key = $1, project_key_nonce = $2, project_key_algorithm = $3
+            WHERE project_id = $4 AND user_id = $5
+            "#,
+            grant.encrypted_project_key,
+            grant.project_key_nonce,
+            grant.project_key_algorithm,
+            project_id,
+            grant.user_id
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+    }
+
+    tx.commit().await.map_err(map_db_error)?;
+    Ok(pkv)
+}
+
 pub async fn get_org_member(
     pool: &DbPool,
     org_id: Uuid,
@@ -469,25 +701,27 @@ pub async fn create_secret(
     encrypted_value: &[u8],
     nonce: &[u8],
     algorithm: &str,
+    project_key_version: i32,
 ) -> Result<SecretRow> {
     sqlx::query_as!(
         SecretRow,
         r#"
         WITH upserted AS (
-            INSERT INTO secrets (project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
+            INSERT INTO secrets (project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
             ON CONFLICT (project_id, environment_id, folder_id, key)
             DO UPDATE SET
                 encrypted_value = EXCLUDED.encrypted_value,
                 nonce = EXCLUDED.nonce,
                 algorithm = EXCLUDED.algorithm,
                 version = secrets.version + 1,
+                project_key_version = EXCLUDED.project_key_version,
                 updated_at = NOW()
-            RETURNING id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, created_at, updated_at
+            RETURNING id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version, created_at, updated_at
         ),
         versioned AS (
-            INSERT INTO secret_versions (secret_id, encrypted_value, nonce, version, algorithm)
-            SELECT id, encrypted_value, nonce, version, algorithm FROM upserted
+            INSERT INTO secret_versions (secret_id, encrypted_value, nonce, version, algorithm, project_key_version)
+            SELECT id, encrypted_value, nonce, version, algorithm, project_key_version FROM upserted
         )
         SELECT * FROM upserted
         "#,
@@ -497,7 +731,8 @@ pub async fn create_secret(
         key,
         encrypted_value,
         nonce,
-        algorithm
+        algorithm,
+        project_key_version
     )
     .fetch_one(pool.inner())
     .await
@@ -514,7 +749,7 @@ pub async fn get_secret(
     sqlx::query_as!(
         SecretRow,
         r#"
-        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, created_at, updated_at
+        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version, created_at, updated_at
         FROM secrets
         WHERE project_id = $1 AND environment_id = $2 AND folder_id IS NOT DISTINCT FROM $3 AND key = $4
         "#,
@@ -544,7 +779,7 @@ pub async fn list_secrets(
     sqlx::query_as!(
         SecretRow,
         r#"
-        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, created_at, updated_at
+        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version, created_at, updated_at
         FROM secrets
         WHERE project_id = $1
           AND ($2::uuid IS NULL OR environment_id = $2)
@@ -836,7 +1071,7 @@ pub async fn list_secret_versions(
     sqlx::query_as!(
         SecretVersionRow,
         r#"
-        SELECT id, secret_id, encrypted_value, nonce, version, algorithm, created_at
+        SELECT id, secret_id, encrypted_value, nonce, version, algorithm, project_key_version, created_at
         FROM secret_versions
         WHERE secret_id = $1
         ORDER BY version DESC
@@ -866,7 +1101,7 @@ pub async fn restore_secret_version(
         SecretRow,
         r#"
         WITH target AS (
-            SELECT s.id AS secret_id, sv.encrypted_value, sv.nonce, sv.algorithm
+            SELECT s.id AS secret_id, sv.encrypted_value, sv.nonce, sv.algorithm, sv.project_key_version
             FROM secrets s
             JOIN secret_versions sv ON sv.secret_id = s.id AND sv.version = $5
             WHERE s.project_id = $1 AND s.environment_id = $2
@@ -877,19 +1112,20 @@ pub async fn restore_secret_version(
             SET encrypted_value = target.encrypted_value,
                 nonce = target.nonce,
                 algorithm = target.algorithm,
+                project_key_version = target.project_key_version,
                 version = secrets.version + 1,
                 updated_at = NOW()
             FROM target
             WHERE secrets.id = target.secret_id
             RETURNING secrets.id, secrets.project_id, secrets.environment_id, secrets.folder_id,
                       secrets.key, secrets.encrypted_value, secrets.nonce, secrets.algorithm,
-                      secrets.version, secrets.created_at, secrets.updated_at
+                      secrets.version, secrets.project_key_version, secrets.created_at, secrets.updated_at
         ),
         versioned AS (
-            INSERT INTO secret_versions (secret_id, encrypted_value, nonce, version, algorithm)
-            SELECT id, encrypted_value, nonce, version, algorithm FROM upserted
+            INSERT INTO secret_versions (secret_id, encrypted_value, nonce, version, algorithm, project_key_version)
+            SELECT id, encrypted_value, nonce, version, algorithm, project_key_version FROM upserted
         )
-        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, created_at, updated_at
+        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version, created_at, updated_at
         FROM upserted
         "#,
         project_id,
@@ -1216,9 +1452,15 @@ pub async fn list_access_log_chain(pool: &DbPool, project_id: Uuid) -> Result<Ve
     .map_err(map_db_error)
 }
 
-/// One project key, re-wrapped to the user's new public key.
+/// One project-key *version* re-wrapped to the user's new public key. A user
+/// who has been through a project-key rotation (ADR 0008) holds more than one
+/// version per project, and every one of them was encapsulated to the *old*
+/// personal keypair -- all of them need a fresh wrap here, not just the
+/// current one, or rotating your personal keypair silently locks you out of
+/// pre-rotation secret history.
 pub struct RotatedProjectKey<'a> {
     pub project_id: Uuid,
+    pub version: i32,
     pub encrypted_project_key: &'a [u8],
     pub project_key_nonce: &'a [u8],
     pub project_key_algorithm: &'a str,
@@ -1290,20 +1532,38 @@ pub async fn rotate_user_keys(
     .await
     .map_err(map_db_error)?;
 
+    // The membership row's flat fields are a "latest version" cache (see ADR
+    // 0008); only the highest version supplied per project should win there,
+    // regardless of what order the caller lists them in.
+    let mut latest_per_project: std::collections::HashMap<Uuid, i32> =
+        std::collections::HashMap::new();
     for key in project_keys {
+        latest_per_project
+            .entry(key.project_id)
+            .and_modify(|v| *v = (*v).max(key.version))
+            .or_insert(key.version);
+    }
+
+    for key in project_keys {
+        // Every version this user holds needs a fresh wrap under their new
+        // public key -- not just the current one.
         let result = sqlx::query!(
             r#"
-            UPDATE project_memberships
+            UPDATE project_key_grants
             SET encrypted_project_key = $1,
                 project_key_nonce = $2,
                 project_key_algorithm = $3
-            WHERE project_id = $4 AND user_id = $5
+            WHERE user_id = $4
+              AND project_key_version_id = (
+                  SELECT id FROM project_key_versions WHERE project_id = $5 AND version = $6
+              )
             "#,
             key.encrypted_project_key,
             key.project_key_nonce,
             key.project_key_algorithm,
+            user_id,
             key.project_id,
-            user_id
+            key.version
         )
         .execute(&mut *tx)
         .await
@@ -1311,6 +1571,30 @@ pub async fn rotate_user_keys(
 
         if result.rows_affected() != 1 {
             return Err(NivritError::Forbidden);
+        }
+
+        if latest_per_project.get(&key.project_id) == Some(&key.version) {
+            let result = sqlx::query!(
+                r#"
+                UPDATE project_memberships
+                SET encrypted_project_key = $1,
+                    project_key_nonce = $2,
+                    project_key_algorithm = $3
+                WHERE project_id = $4 AND user_id = $5
+                "#,
+                key.encrypted_project_key,
+                key.project_key_nonce,
+                key.project_key_algorithm,
+                key.project_id,
+                user_id
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+
+            if result.rows_affected() != 1 {
+                return Err(NivritError::Forbidden);
+            }
         }
     }
 

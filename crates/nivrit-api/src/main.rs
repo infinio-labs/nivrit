@@ -177,7 +177,15 @@ async fn main() -> anyhow::Result<()> {
         )
         .route(
             "/projects/{project_id}/members",
-            post(handlers::projects::invite_member),
+            get(handlers::projects::list_members).post(handlers::projects::invite_member),
+        )
+        .route(
+            "/projects/{project_id}/key-versions",
+            get(handlers::projects::list_my_key_versions),
+        )
+        .route(
+            "/projects/{project_id}/rotate-key",
+            post(handlers::projects::rotate_key),
         )
         .route(
             "/projects/{project_id}/audit-logs",

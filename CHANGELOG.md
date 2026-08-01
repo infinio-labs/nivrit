@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Project keys can now be rotated.** Previously `POST /users/me/rotate-key`
+  only re-wrapped a project's *existing* symmetric key to a user's new
+  personal keypair — there was no way to actually replace it, so a removed
+  member who'd copied the key retained it forever. A project's key is now a
+  versioned sequence ([ADR 0008](docs/adr/0008-versioned-project-keys.md)):
+  `niv rotate-project-key` mints the next version and grants it only to
+  current members, without touching any existing secret. This is the
+  envelope-rotation pattern NIST SP 800-57, AWS KMS, and HashiCorp Vault use
+  (rotate the wrapping key, leave wrapped data alone), not a bulk
+  re-encryption — the first design considered was eager re-encryption, and
+  research into how those three actually handle this argued against it
+  before it shipped. Server (`nivrit-db`, `nivrit-api`) and CLI are wired
+  end-to-end and verified live across a real two-user session with a
+  mid-flight rotation; web UI and non-Rust SDKs are not yet updated (they
+  keep working for any project that's never been rotated).
 - **Audit-log entries are now hash-chained, so a deleted or reordered entry is
   detectable, not just a modified one.** A lone per-entry ML-DSA-65 signature
   proves a given row's content wasn't altered since signing, but has nothing to

@@ -327,12 +327,11 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
 
 ### 9.1 Findings that warrant action
 
-> **Status as of 2026-08-01:** items 1, 2, 3, and 6 are fixed (see commit history and
-> the `[Unreleased]` section of `CHANGELOG.md`). Items 4 and 5 are deliberately
-> deferred, not fixed — both would require a design decision (resource-scoped RBAC
-> shape; a re-encrypt-all-secrets rotation flow) that shouldn't be rushed under the
-> same pass as the mechanical fixes below. See `docs/progress.md` §5 for the current
-> status of each.
+> **Status as of 2026-08-01:** items 1, 2, 3, 4, and 6 are fixed (see commit history
+> and the `[Unreleased]` section of `CHANGELOG.md`). Item 5 (RBAC granularity) remains
+> deliberately deferred — it needs a product decision on the resource-scoping shape
+> (per-environment membership? per-folder? inheritance?) that a design pass, not a
+> mechanical fix, should settle. See `docs/progress.md` §5 for current status.
 
 1. ~~**Audit-log signing is silently optional.**~~ **Fixed.** `Config::validate()` now
    requires either a real `NIVRIT_SIGNING_KEY_SEED` or an explicit
@@ -346,15 +345,18 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
    of an unimplemented aspiration, with the reasoning for staying on pure ML-DSA-65
    made explicit (the new hash chain already provides a property a classical
    co-signature would only partially add). (§4)
-4. **One long-lived, unrotated `project_key` encrypts every secret write in a
-   project** — not a fresh DEK per secret/version — with no encryption-count ceiling
-   or forced re-key path. Far below the NIST GCM nonce-collision bound under realistic
-   use, but nothing structurally prevents a pathological high-throughput automation
-   workload from approaching it. **Deferred**: full rotation means decrypting and
-   re-encrypting every secret in a project and re-encapsulating the new key to every
-   member; a bug there risks permanent data loss, not just a missing feature, so it
-   needs its own careful pass rather than being rushed in alongside mechanical fixes.
-   Tracked in `docs/progress.md` §5. (§5)
+4. ~~**One long-lived, unrotated `project_key` encrypts every secret write in a
+   project.**~~ **Fixed** — see [ADR 0008](docs/adr/0008-versioned-project-keys.md).
+   A project's key is now a versioned sequence: rotation mints a new version and
+   grants it only to current members, without touching existing ciphertext. This is
+   the NIST SP 800-57 / AWS KMS / HashiCorp Vault envelope-encryption pattern (rotate
+   the wrapping key, leave wrapped data alone), not the eager bulk-re-encrypt design
+   this finding originally implied was needed — research done as part of fixing this
+   specifically argued against that approach. Server (`nivrit-db`, `nivrit-api`) and
+   CLI are wired end-to-end and verified live (register two users, rotate mid-session,
+   confirm the pre-existing member automatically receives the new version while
+   decrypting old ciphertext under the old one). Web UI and non-Rust SDKs are not yet
+   updated — see ADR 0008's consequences section. (§5)
 5. **RBAC is flat and project-scoped only**, despite `Environment` and `Folder`
    already existing as addressable models — no way to grant environment- or
    folder-level permissions today. A real gap versus Vault, Infisical, and Doppler.
@@ -405,7 +407,7 @@ This document is a design-decision review, not a penetration test or formal veri
 
 ## 11. Conclusion
 
-Nivrit's core cryptographic architecture — split-derivation authentication, hybrid post-quantum key exchange, crypto-agile symmetric encryption — holds up well against current standards and academic literature, in several places more rigorously than the project's own documentation gave it credit for (the Argon2id/pepper design in particular is stronger, and better-cited, than its own code comments claimed before this review corrected them). The most consequential findings from this review were operational rather than cryptographic: audit-log signing that silently disabled itself, and audit-log signatures that didn't protect against deletion, were both fixable without touching the cryptographic core and have since been fixed (§9.1), verified live against a real row deletion, not just unit tests. They mattered more in practice than the theoretical maturity gap already tracked in ADR 0007. The RBAC granularity gap and the project-key rotation gap are legitimate product decisions rather than defects fixable by a mechanical patch — both remain open on purpose, tracked in `docs/progress.md` §5, because shipping the wrong shape under time pressure would cost more than the gap itself does today. The licensing trade-off (§8) was never a defect to begin with, just a nuance worth stating plainly instead of implying more than the license actually guarantees.
+Nivrit's core cryptographic architecture — split-derivation authentication, hybrid post-quantum key exchange, crypto-agile symmetric encryption — holds up well against current standards and academic literature, in several places more rigorously than the project's own documentation gave it credit for (the Argon2id/pepper design in particular is stronger, and better-cited, than its own code comments claimed before this review corrected them). The most consequential findings from this review were operational rather than cryptographic: audit-log signing that silently disabled itself, audit-log signatures that didn't protect against deletion, and a project key with no rotation path were all fixable without touching the cryptographic core, and have since been fixed (§9.1) — the audit-log chain verified live against a real row deletion, the project-key rotation verified live across a real two-user session with a mid-flight rotation, not just unit tests in either case. They mattered more in practice than the theoretical maturity gap already tracked in ADR 0007. Building the rotation fix surfaced a second lesson worth naming: the first design considered for it (eager bulk re-encryption) was wrong, and research into how NIST, AWS, and HashiCorp actually handle this class of problem is what caught that before it shipped — worth remembering next time a "safety" fix is being designed under the assumption that touching more data is the safer choice. The RBAC granularity gap is a legitimate product decision rather than a defect fixable by a mechanical patch — it remains open on purpose, tracked in `docs/progress.md` §5, because shipping the wrong shape under time pressure would cost more than the gap itself does today. The licensing trade-off (§8) was never a defect to begin with, just a nuance worth stating plainly instead of implying more than the license actually guarantees.
 
 ---
 

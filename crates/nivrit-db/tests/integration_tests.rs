@@ -48,6 +48,35 @@ async fn create_test_project(pool: &DbPool, org_id: Uuid) -> Uuid {
         .id
 }
 
+/// Add `user_id` as a project member and mint the project's initial key
+/// version in one call, mirroring what `create_project` does for real. Tests
+/// that create secrets need this: `secrets.project_key_version` has a FK into
+/// `project_key_versions`, so a secret can't be inserted for a project that
+/// has never had a key version minted.
+async fn add_test_project_member_with_key(pool: &DbPool, project_id: Uuid, user_id: Uuid) {
+    queries::add_project_member(
+        pool,
+        project_id,
+        user_id,
+        Role::Admin,
+        b"encrypted-project-key",
+        b"nonce",
+        "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+    )
+    .await
+    .unwrap();
+    queries::mint_initial_project_key_version(
+        pool,
+        project_id,
+        user_id,
+        b"encrypted-project-key",
+        b"nonce",
+        "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+    )
+    .await
+    .unwrap();
+}
+
 async fn create_test_environment(pool: &DbPool, project_id: Uuid) -> Uuid {
     let slug = format!("test-env-{}", Uuid::new_v4());
     queries::create_environment(pool, project_id, "Test Environment", &slug)
@@ -190,17 +219,7 @@ async fn project_membership_and_secret_crud() {
         .unwrap();
 
     let project_id = create_test_project(&pool, org_id).await;
-    queries::add_project_member(
-        &pool,
-        project_id,
-        user_id,
-        Role::Admin,
-        b"encrypted-project-key",
-        b"nonce",
-        "hybrid_x25519_ml_kem_768_aes256gcm_v1",
-    )
-    .await
-    .unwrap();
+    add_test_project_member_with_key(&pool, project_id, user_id).await;
 
     let membership = queries::get_project_member(&pool, project_id, user_id)
         .await
@@ -218,6 +237,7 @@ async fn project_membership_and_secret_crud() {
         b"encrypted-value",
         b"nonce", // codeql[rust/hard-coded-cryptographic-value]
         "aes256gcm-v1",
+        1,
     )
     .await
     .expect("create_secret failed");
@@ -256,6 +276,7 @@ async fn secret_versioning_bumps_version() {
         .await
         .unwrap();
     let project_id = create_test_project(&pool, org_id).await;
+    add_test_project_member_with_key(&pool, project_id, user_id).await;
     let env_id = create_test_environment(&pool, project_id).await;
 
     let first = queries::create_secret(
@@ -267,6 +288,7 @@ async fn secret_versioning_bumps_version() {
         b"v1",
         b"nonce1", // codeql[rust/hard-coded-cryptographic-value]
         "aes256gcm-v1",
+        1,
     )
     .await
     .unwrap();
@@ -281,6 +303,7 @@ async fn secret_versioning_bumps_version() {
         b"v2",
         b"nonce2", // codeql[rust/hard-coded-cryptographic-value]
         "aes256gcm-v1",
+        1,
     )
     .await
     .unwrap();
@@ -454,4 +477,287 @@ async fn login_rate_limit_prunes_stale_rows() {
     assert!(!queries::login_attempt_blocked(&pool, &key, 60, 3)
         .await
         .unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Versioned project keys (ADR 0008)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn project_key_rotation_full_flow() {
+    let pool = setup_pool().await;
+    let org_id = create_test_org(&pool).await;
+    let user_a = create_test_user(&pool).await;
+    let user_b = create_test_user(&pool).await;
+    queries::add_org_member(&pool, org_id, user_a, Role::Admin)
+        .await
+        .unwrap();
+    let project_id = create_test_project(&pool, org_id).await;
+
+    // user_a creates the project: mints version 1.
+    add_test_project_member_with_key(&pool, project_id, user_a).await;
+
+    // user_b is invited: granted the current latest version (1), not
+    // hardcoded to version 1 by coincidence -- this is the code path
+    // `grant_latest_project_key_version` covers.
+    queries::add_project_member(
+        &pool,
+        project_id,
+        user_b,
+        Role::Member,
+        b"encrypted-project-key-b",
+        b"nonce-b",
+        "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+    )
+    .await
+    .unwrap();
+    let granted_version = queries::grant_latest_project_key_version(
+        &pool,
+        project_id,
+        user_b,
+        b"encrypted-project-key-b",
+        b"nonce-b",
+        "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+    )
+    .await
+    .unwrap();
+    assert_eq!(granted_version, 1);
+
+    let env_id = create_test_environment(&pool, project_id).await;
+
+    // A secret written before rotation is tagged version 1.
+    let s1 = queries::create_secret(
+        &pool,
+        project_id,
+        env_id,
+        None,
+        "PRE_ROTATION",
+        b"v1-ciphertext",
+        b"v1-nonce",
+        "aes256gcm-v1",
+        1,
+    )
+    .await
+    .unwrap();
+    assert_eq!(s1.project_key_version, 1);
+
+    // Rotate: both current members must be covered.
+    let grants = vec![
+        queries::RotationGrant {
+            user_id: user_a,
+            encrypted_project_key: b"new-key-for-a",
+            project_key_nonce: b"nonce-a-2",
+            project_key_algorithm: "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+        },
+        queries::RotationGrant {
+            user_id: user_b,
+            encrypted_project_key: b"new-key-for-b",
+            project_key_nonce: b"nonce-b-2",
+            project_key_algorithm: "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+        },
+    ];
+    let pkv = queries::rotate_project_key(&pool, project_id, user_a, &grants)
+        .await
+        .expect("rotation with full membership coverage should succeed");
+    assert_eq!(pkv.version, 2);
+
+    // A secret written after rotation is tagged version 2; the pre-rotation
+    // secret is untouched -- rotation never rewrites existing rows.
+    let s2 = queries::create_secret(
+        &pool,
+        project_id,
+        env_id,
+        None,
+        "POST_ROTATION",
+        b"v2-ciphertext",
+        b"v2-nonce",
+        "aes256gcm-v1",
+        2,
+    )
+    .await
+    .unwrap();
+    assert_eq!(s2.project_key_version, 2);
+    let s1_after = queries::get_secret(&pool, project_id, env_id, None, "PRE_ROTATION")
+        .await
+        .unwrap();
+    assert_eq!(s1_after.project_key_version, 1);
+    assert_eq!(s1_after.encrypted_value, b"v1-ciphertext");
+
+    // Both members now hold both versions, oldest first.
+    let a_grants = queries::list_project_key_grants_for_user(&pool, project_id, user_a)
+        .await
+        .unwrap();
+    assert_eq!(
+        a_grants.iter().map(|g| g.version).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    let b_grants = queries::list_project_key_grants_for_user(&pool, project_id, user_b)
+        .await
+        .unwrap();
+    assert_eq!(
+        b_grants.iter().map(|g| g.version).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+
+    // The membership row's flat fields (the legacy single-key cache older
+    // clients read) reflect the *new* version's wrap after rotation.
+    let membership_a = queries::get_project_member(&pool, project_id, user_a)
+        .await
+        .unwrap();
+    assert_eq!(membership_a.encrypted_project_key, b"new-key-for-a");
+}
+
+/// The security property ADR 0008 exists for: rotation grants must cover
+/// *exactly* current membership. This is what would, once a "remove member"
+/// endpoint exists, stop a removed member from ever receiving a later
+/// version -- the same check rejects a grant list that's missing a current
+/// member or that includes someone who isn't one.
+#[tokio::test]
+async fn project_key_rotation_rejects_grants_not_matching_current_membership() {
+    let pool = setup_pool().await;
+    let org_id = create_test_org(&pool).await;
+    let user_a = create_test_user(&pool).await;
+    let user_b = create_test_user(&pool).await;
+    let stranger = create_test_user(&pool).await;
+    queries::add_org_member(&pool, org_id, user_a, Role::Admin)
+        .await
+        .unwrap();
+    let project_id = create_test_project(&pool, org_id).await;
+    add_test_project_member_with_key(&pool, project_id, user_a).await;
+    queries::add_project_member(
+        &pool,
+        project_id,
+        user_b,
+        Role::Member,
+        b"encrypted-project-key-b",
+        b"nonce-b",
+        "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+    )
+    .await
+    .unwrap();
+    queries::grant_latest_project_key_version(
+        &pool,
+        project_id,
+        user_b,
+        b"encrypted-project-key-b",
+        b"nonce-b",
+        "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+    )
+    .await
+    .unwrap();
+
+    // Missing a current member (user_b) -- rejected.
+    let incomplete = vec![queries::RotationGrant {
+        user_id: user_a,
+        encrypted_project_key: b"x",
+        project_key_nonce: b"y",
+        project_key_algorithm: "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+    }];
+    assert!(
+        queries::rotate_project_key(&pool, project_id, user_a, &incomplete)
+            .await
+            .is_err()
+    );
+
+    // Includes someone who isn't a member -- also rejected, even though every
+    // real member is present.
+    let extra = vec![
+        queries::RotationGrant {
+            user_id: user_a,
+            encrypted_project_key: b"x",
+            project_key_nonce: b"y",
+            project_key_algorithm: "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+        },
+        queries::RotationGrant {
+            user_id: user_b,
+            encrypted_project_key: b"x",
+            project_key_nonce: b"y",
+            project_key_algorithm: "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+        },
+        queries::RotationGrant {
+            user_id: stranger,
+            encrypted_project_key: b"x",
+            project_key_nonce: b"y",
+            project_key_algorithm: "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+        },
+    ];
+    assert!(
+        queries::rotate_project_key(&pool, project_id, user_a, &extra)
+            .await
+            .is_err()
+    );
+
+    // No version was minted by either failed attempt.
+    let grants = queries::list_project_key_grants_for_user(&pool, project_id, user_a)
+        .await
+        .unwrap();
+    assert_eq!(grants.len(), 1, "only version 1 should exist");
+}
+
+/// Restoring a secret to an older version must carry forward *that* version's
+/// project-key tag, not silently relabel it as whatever the secret's most
+/// recent write used -- otherwise a client would try to decrypt pre-rotation
+/// ciphertext with a post-rotation key.
+#[tokio::test]
+async fn restore_secret_version_preserves_its_own_project_key_version() {
+    let pool = setup_pool().await;
+    let org_id = create_test_org(&pool).await;
+    let user_id = create_test_user(&pool).await;
+    queries::add_org_member(&pool, org_id, user_id, Role::Admin)
+        .await
+        .unwrap();
+    let project_id = create_test_project(&pool, org_id).await;
+    add_test_project_member_with_key(&pool, project_id, user_id).await;
+    let env_id = create_test_environment(&pool, project_id).await;
+
+    // v1 of the secret, written under project-key version 1.
+    queries::create_secret(
+        &pool,
+        project_id,
+        env_id,
+        None,
+        "RESTORE_ME",
+        b"original",
+        b"nonce1",
+        "aes256gcm-v1",
+        1,
+    )
+    .await
+    .unwrap();
+
+    // Rotate the project key, then write a new value under version 2 --
+    // secret history now spans two different project-key versions.
+    let grants = vec![queries::RotationGrant {
+        user_id,
+        encrypted_project_key: b"new-key",
+        project_key_nonce: b"new-nonce",
+        project_key_algorithm: "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+    }];
+    queries::rotate_project_key(&pool, project_id, user_id, &grants)
+        .await
+        .unwrap();
+    queries::create_secret(
+        &pool,
+        project_id,
+        env_id,
+        None,
+        "RESTORE_ME",
+        b"updated",
+        b"nonce2",
+        "aes256gcm-v1",
+        2,
+    )
+    .await
+    .unwrap();
+
+    // Restore version 1 (the pre-rotation ciphertext) as the new latest.
+    let restored =
+        queries::restore_secret_version(&pool, project_id, env_id, None, "RESTORE_ME", 1)
+            .await
+            .unwrap();
+    assert_eq!(restored.encrypted_value, b"original");
+    assert_eq!(
+        restored.project_key_version, 1,
+        "restoring v1's ciphertext must keep v1's key tag, not inherit v2's"
+    );
 }

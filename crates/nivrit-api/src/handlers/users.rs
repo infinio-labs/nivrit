@@ -169,10 +169,21 @@ pub struct RotateKeyRequest {
 #[derive(Debug, Deserialize)]
 pub struct RotatedProjectKey {
     pub project_id: uuid::Uuid,
+    /// Which project-key version this wrap is for (ADR 0008). A user who has
+    /// been through a project rotation holds more than one version per
+    /// project and must re-wrap every one of them here, not just the
+    /// current one -- otherwise older versions stay encapsulated to the
+    /// personal key pair this call is replacing, and become unrecoverable.
+    #[serde(default = "default_project_key_version")]
+    pub version: i32,
     pub encrypted_project_key: String,
     pub project_key_nonce: String,
     #[serde(default = "default_private_key_algorithm")]
     pub project_key_algorithm: String,
+}
+
+fn default_project_key_version() -> i32 {
+    1
 }
 
 fn default_private_key_algorithm() -> String {
@@ -223,7 +234,9 @@ pub async fn rotate_key(
 
     // Decode everything before touching the database so a malformed entry
     // cannot abort the transaction halfway.
-    let decoded: Vec<(Uuid, Vec<u8>, Vec<u8>, String)> = req
+    // (project_id, version, encrypted_project_key, project_key_nonce, project_key_algorithm)
+    type DecodedProjectKey = (Uuid, i32, Vec<u8>, Vec<u8>, String);
+    let decoded: Vec<DecodedProjectKey> = req
         .project_keys
         .iter()
         .map(|key| {
@@ -235,6 +248,7 @@ pub async fn rotate_key(
             })?;
             Ok((
                 key.project_id,
+                key.version,
                 encrypted,
                 nonce,
                 key.project_key_algorithm.clone(),
@@ -245,8 +259,9 @@ pub async fn rotate_key(
     let project_keys: Vec<queries::RotatedProjectKey<'_>> = decoded
         .iter()
         .map(
-            |(project_id, encrypted, nonce, algorithm)| queries::RotatedProjectKey {
+            |(project_id, version, encrypted, nonce, algorithm)| queries::RotatedProjectKey {
                 project_id: *project_id,
+                version: *version,
                 encrypted_project_key: encrypted,
                 project_key_nonce: nonce,
                 project_key_algorithm: algorithm,

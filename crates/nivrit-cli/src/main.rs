@@ -314,6 +314,15 @@ enum Commands {
         #[arg(long)]
         password_stdin: bool,
     },
+    /// Mint a new version of a project's symmetric key, granted only to its
+    /// current members (ADR 0008). A removed member never receives it, so
+    /// they're locked out of everything created from this point forward.
+    /// Existing secrets are untouched -- they stay readable under whichever
+    /// version originally encrypted them.
+    RotateProjectKey {
+        #[arg(short, long)]
+        project_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -349,7 +358,30 @@ struct CliConfig {
     /// wrapped under a local device key (see `encrypt_local`).
     #[serde(default)]
     master_key_available: bool,
-    project_keys: HashMap<String, EncryptedKey>,
+    project_keys: HashMap<String, ProjectKeyState>,
+}
+
+/// All project-key versions the user holds for one project (ADR 0008), plus
+/// which one is current -- i.e. the one new secret writes should use.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct ProjectKeyState {
+    current_version: i32,
+    /// `(version, locally-encrypted key)` pairs. A `Vec` instead of a map
+    /// keyed by `i32` sidesteps JSON's string-only object keys.
+    versions: Vec<(i32, EncryptedKey)>,
+}
+
+impl ProjectKeyState {
+    fn get(&self, version: i32) -> Option<&EncryptedKey> {
+        self.versions
+            .iter()
+            .find(|(v, _)| *v == version)
+            .map(|(_, k)| k)
+    }
+
+    fn current(&self) -> Option<&EncryptedKey> {
+        self.get(self.current_version)
+    }
 }
 
 /// A value encrypted at rest under the local device wrapping key (see
@@ -644,6 +676,9 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let password = resolve_password(password, password_stdin, "Master password: ")?;
             rotate_key(&client, &mut config, format, &password).await?
+        }
+        Commands::RotateProjectKey { project_id } => {
+            rotate_project_key(&client, &mut config, format, &project_id).await?
         }
     }
 
@@ -1099,23 +1134,50 @@ async fn recover_project_keys(
         let project_id = project["project_id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("project_id missing in membership"))?;
-        let encrypted_project_key_b64 = project["encrypted_project_key"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("encrypted_project_key missing in membership"))?;
-        let encrypted_project_key_bytes = STANDARD.decode(encrypted_project_key_b64)?;
-        if encrypted_project_key_bytes.is_empty() {
-            // Skip projects where the key blob is empty (legacy/no-access rows).
-            continue;
-        }
-        let encapsulated: EncapsulatedProjectKey =
-            serde_json::from_slice(&encrypted_project_key_bytes)
-                .map_err(|e| anyhow::anyhow!("invalid encrypted project key: {e}"))?;
-        let project_key = decapsulate_project_key_hybrid(&encapsulated, private_key_plaintext)?;
 
-        config.project_keys.insert(
-            project_id.to_string(),
-            encrypt_local(project_key.as_slice())?,
-        );
+        // Every version this account has ever been granted (ADR 0008), oldest
+        // first -- not just the current one -- so pre-rotation secret history
+        // stays decryptable. A project that's never been rotated returns
+        // exactly one entry, so this is a strict superset of the old
+        // single-key recovery, not a behavior change for the common case.
+        let versions_res: serde_json::Value = client
+            .get(format!("{}/projects/{}/key-versions", server, project_id))
+            .bearer_auth(token)
+            .send()
+            .await?
+            .json()
+            .await?;
+        let versions = versions_res.as_array().ok_or_else(|| {
+            anyhow::anyhow!("expected array from /projects/{project_id}/key-versions")
+        })?;
+
+        let mut state = ProjectKeyState::default();
+        for v in versions {
+            let version = v["version"]
+                .as_i64()
+                .ok_or_else(|| anyhow::anyhow!("version missing in key-versions entry"))?
+                as i32;
+            let encrypted_project_key_b64 =
+                v["encrypted_project_key"].as_str().ok_or_else(|| {
+                    anyhow::anyhow!("encrypted_project_key missing in key-versions entry")
+                })?;
+            let encrypted_project_key_bytes = STANDARD.decode(encrypted_project_key_b64)?;
+            if encrypted_project_key_bytes.is_empty() {
+                continue;
+            }
+            let encapsulated: EncapsulatedProjectKey =
+                serde_json::from_slice(&encrypted_project_key_bytes)
+                    .map_err(|e| anyhow::anyhow!("invalid encrypted project key: {e}"))?;
+            let project_key = decapsulate_project_key_hybrid(&encapsulated, private_key_plaintext)?;
+
+            state
+                .versions
+                .push((version, encrypt_local(project_key.as_slice())?));
+            state.current_version = state.current_version.max(version);
+        }
+        if !state.versions.is_empty() {
+            config.project_keys.insert(project_id.to_string(), state);
+        }
     }
     Ok(())
 }
@@ -1350,9 +1412,13 @@ async fn create_project(
     let project_id = res["id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("project id missing in create project response"))?;
-    config
-        .project_keys
-        .insert(project_id.to_string(), encrypt_local(&project_key)?);
+    config.project_keys.insert(
+        project_id.to_string(),
+        ProjectKeyState {
+            current_version: 1,
+            versions: vec![(1, encrypt_local(&project_key)?)],
+        },
+    );
 
     let slug_resp = res["slug"]
         .as_str()
@@ -1807,6 +1873,7 @@ async fn set_secret(
     key: &str,
     value: &str,
 ) -> anyhow::Result<()> {
+    let key_version = project_key_state(config, project_id)?.current_version;
     let project_key = load_project_key(config, project_id)?;
     let encrypted = encrypt_value(value.as_bytes(), &project_key)?;
 
@@ -1816,6 +1883,7 @@ async fn set_secret(
         "encrypted_value": STANDARD.encode(&encrypted.ciphertext),
         "nonce": STANDARD.encode(&encrypted.nonce),
         "algorithm": "aes256gcm-v1",
+        "project_key_version": key_version,
     });
 
     let res: serde_json::Value = client
@@ -1858,8 +1926,6 @@ async fn get_secret(
     environment_id: &str,
     key: &str,
 ) -> anyhow::Result<()> {
-    let project_key = load_project_key(config, project_id)?;
-
     let res: serde_json::Value = client
         .get(format!(
             "{}/projects/{}/secrets/{}?environment_id={}",
@@ -1877,6 +1943,12 @@ async fn get_secret(
     let nonce_value = res["nonce"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("nonce missing in get secret response"))?;
+    // Decrypt with whichever key version this specific ciphertext was written
+    // under (ADR 0008) -- not necessarily this project's current version, if
+    // it predates a rotation. Missing field defaults to 1 for responses from
+    // an old (unrotated) server/project.
+    let key_version = res["project_key_version"].as_i64().unwrap_or(1) as i32;
+    let project_key = load_project_key_version(config, project_id, key_version)?;
     let ciphertext = STANDARD.decode(encrypted_value)?;
     let nonce = STANDARD.decode(nonce_value)?;
     let plaintext = nivrit_crypto::decrypt_value(&ciphertext, &nonce, &project_key)?;
@@ -1906,8 +1978,6 @@ async fn secret_versions(
     environment_id: &str,
     key: &str,
 ) -> anyhow::Result<()> {
-    let project_key = load_project_key(config, project_id)?;
-
     let res: serde_json::Value = client
         .get(format!(
             "{}/projects/{}/secrets/{}/versions?environment_id={}",
@@ -1940,6 +2010,8 @@ async fn secret_versions(
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("nonce missing"))?;
         let created_at = v["created_at"].as_str().unwrap_or("").to_string();
+        let key_version = v["project_key_version"].as_i64().unwrap_or(1) as i32;
+        let project_key = load_project_key_version(config, project_id, key_version)?;
         let ciphertext = STANDARD.decode(encrypted_value)?;
         let nonce = STANDARD.decode(nonce)?;
         let plaintext = nivrit_crypto::decrypt_value(&ciphertext, &nonce, &project_key)?;
@@ -2005,8 +2077,6 @@ async fn list_secrets(
     project_id: &str,
     environment_id: &str,
 ) -> anyhow::Result<()> {
-    let project_key = load_project_key(config, project_id)?;
-
     let res: serde_json::Value = client
         .get(format!(
             "{}/projects/{}/secrets?environment_id={}",
@@ -2039,6 +2109,8 @@ async fn list_secrets(
         let nonce = secret["nonce"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("nonce missing"))?;
+        let key_version = secret["project_key_version"].as_i64().unwrap_or(1) as i32;
+        let project_key = load_project_key_version(config, project_id, key_version)?;
         let ciphertext = STANDARD.decode(encrypted_value)?;
         let nonce = STANDARD.decode(nonce)?;
         let plaintext = nivrit_crypto::decrypt_value(&ciphertext, &nonce, &project_key)?;
@@ -2180,7 +2252,6 @@ async fn fetch_env_secrets(
     config: &CliConfig,
     project_id: &str,
     environment_id: &str,
-    project_key: &[u8; 32],
 ) -> anyhow::Result<std::collections::HashMap<String, String>> {
     let res: serde_json::Value = client
         .get(format!(
@@ -2208,9 +2279,13 @@ async fn fetch_env_secrets(
         let nonce = secret["nonce"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("nonce missing"))?;
+        // Each secret may have been written under a different project-key
+        // version (ADR 0008); decrypt with whichever one it actually used.
+        let key_version = secret["project_key_version"].as_i64().unwrap_or(1) as i32;
+        let project_key = load_project_key_version(config, project_id, key_version)?;
         let ciphertext = STANDARD.decode(encrypted_value)?;
         let nonce = STANDARD.decode(nonce)?;
-        let plaintext = nivrit_crypto::decrypt_value(&ciphertext, &nonce, project_key)?;
+        let plaintext = nivrit_crypto::decrypt_value(&ciphertext, &nonce, &project_key)?;
         map.insert(
             key.to_string(),
             String::from_utf8_lossy(&plaintext).to_string(),
@@ -2231,7 +2306,6 @@ async fn resolve_env_map(
     config: &CliConfig,
     project_id: &str,
     environment_id: &str,
-    project_key: &[u8; 32],
 ) -> anyhow::Result<std::collections::HashMap<String, String>> {
     let mut map = std::collections::HashMap::new();
 
@@ -2248,14 +2322,13 @@ async fn resolve_env_map(
     if let Some(arr) = imports.as_array() {
         for imp in arr {
             if let Some(src) = imp["source_environment_id"].as_str() {
-                let src_map =
-                    fetch_env_secrets(client, config, project_id, src, project_key).await?;
+                let src_map = fetch_env_secrets(client, config, project_id, src).await?;
                 map.extend(src_map); // imported: low precedence
             }
         }
     }
 
-    let local = fetch_env_secrets(client, config, project_id, environment_id, project_key).await?;
+    let local = fetch_env_secrets(client, config, project_id, environment_id).await?;
     map.extend(local); // local overrides imports
     Ok(map)
 }
@@ -2323,9 +2396,7 @@ async fn export_env(
     project_id: &str,
     environment_id: &str,
 ) -> anyhow::Result<()> {
-    let project_key = load_project_key(config, project_id)?;
-
-    let merged = resolve_env_map(client, config, project_id, environment_id, &project_key).await?;
+    let merged = resolve_env_map(client, config, project_id, environment_id).await?;
     let resolved = resolve_references(&merged)?;
 
     #[derive(Serialize)]
@@ -2358,8 +2429,7 @@ async fn run_command(
     environment_id: &str,
     command: &[String],
 ) -> anyhow::Result<()> {
-    let project_key = load_project_key(config, project_id)?;
-    let merged = resolve_env_map(client, config, project_id, environment_id, &project_key).await?;
+    let merged = resolve_env_map(client, config, project_id, environment_id).await?;
     let resolved = resolve_references(&merged)?;
 
     let (program, args) = command
@@ -2606,23 +2676,29 @@ async fn rotate_key(
         encrypt_private_key(&new_private_key_plaintext, password)?;
     let new_public_key = new_keypair.serialize_public_key();
 
-    // Re-encrypt every project key we hold to the new public key.
+    // Re-encrypt every project-key *version* we hold to the new public key --
+    // not just the current one (ADR 0008). A version left behind stays
+    // encapsulated to the personal key pair this call is replacing and
+    // becomes unrecoverable.
     let mut rotated_project_keys = Vec::new();
-    for (project_id, encrypted) in &config.project_keys {
-        let project_key_bytes = decrypt_local(encrypted)?;
-        let project_key: [u8; 32] = project_key_bytes
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("invalid project key length"))?;
+    for (project_id, state) in &config.project_keys {
+        for (version, encrypted) in &state.versions {
+            let project_key_bytes = decrypt_local(encrypted)?;
+            let project_key: [u8; 32] = project_key_bytes
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid project key length"))?;
 
-        let new_enc = encapsulate_project_key_hybrid(&project_key, &new_public_key)?;
-        let new_enc_json = serde_json::to_vec(&new_enc)?;
+            let new_enc = encapsulate_project_key_hybrid(&project_key, &new_public_key)?;
+            let new_enc_json = serde_json::to_vec(&new_enc)?;
 
-        rotated_project_keys.push(serde_json::json!({
-            "project_id": project_id,
-            "encrypted_project_key": STANDARD.encode(&new_enc_json),
-            "project_key_nonce": STANDARD.encode(&[] as &[u8]),
-            "project_key_algorithm": nivrit_crypto::HYBRID_SUITE_ID,
-        }));
+            rotated_project_keys.push(serde_json::json!({
+                "project_id": project_id,
+                "version": version,
+                "encrypted_project_key": STANDARD.encode(&new_enc_json),
+                "project_key_nonce": STANDARD.encode(&[] as &[u8]),
+                "project_key_algorithm": nivrit_crypto::HYBRID_SUITE_ID,
+            }));
+        }
     }
 
     // Rotation invalidates the old recovery code along with the old key pair, so
@@ -2696,8 +2772,40 @@ async fn rotate_key(
     Ok(())
 }
 
+/// The version new secret writes should use: the caller's current project key.
 fn load_project_key(config: &CliConfig, project_id: &str) -> anyhow::Result<[u8; 32]> {
-    let encrypted = config.project_keys.get(project_id).ok_or_else(|| {
+    let state = project_key_state(config, project_id)?;
+    let encrypted = state.current().ok_or_else(|| {
+        anyhow::anyhow!("no current key version cached for project {project_id}; log in again")
+    })?;
+    decrypt_project_key_bytes(encrypted)
+}
+
+/// A specific project-key version's plaintext -- for decrypting a secret or
+/// secret-version that was written under an older version than the one
+/// currently cached as "latest" (ADR 0008). A version not found locally means
+/// either this device predates that rotation (log in again to pick up newly
+/// visible history) or, if the caller was removed from the project, that they
+/// were never granted it in the first place.
+fn load_project_key_version(
+    config: &CliConfig,
+    project_id: &str,
+    version: i32,
+) -> anyhow::Result<[u8; 32]> {
+    let state = project_key_state(config, project_id)?;
+    let encrypted = state.get(version).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no cached key for project {project_id} version {version}; log in again to pick up any versions granted since your last login"
+        )
+    })?;
+    decrypt_project_key_bytes(encrypted)
+}
+
+fn project_key_state<'a>(
+    config: &'a CliConfig,
+    project_id: &str,
+) -> anyhow::Result<&'a ProjectKeyState> {
+    config.project_keys.get(project_id).ok_or_else(|| {
         // Almost always means the session was established with a token but no
         // master password, so no project key could be unwrapped. Saying so beats
         // "project key not found", which reads like the project is missing.
@@ -2715,11 +2823,121 @@ fn load_project_key(config: &CliConfig, project_id: &str) -> anyhow::Result<[u8;
                 "no key for project {project_id}. You may not be a member of it, or you may need to log in again to pick up a newly granted membership."
             )
         }
-    })?;
+    })
+}
+
+fn decrypt_project_key_bytes(encrypted: &EncryptedKey) -> anyhow::Result<[u8; 32]> {
     let project_key = decrypt_local(encrypted)?;
     project_key
         .try_into()
         .map_err(|_| anyhow::anyhow!("invalid project key length"))
+}
+
+/// Mint a new project-key version and grant it to exactly the project's
+/// current members (ADR 0008). No existing secret is touched -- this only
+/// ever adds a version and some grants. A removed member simply never
+/// receives this grant, so they're locked out of everything created from
+/// this point forward.
+async fn rotate_project_key(
+    client: &reqwest::Client,
+    config: &mut CliConfig,
+    format: OutputFormat,
+    project_id: &str,
+) -> anyhow::Result<()> {
+    let token = config
+        .token
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
+
+    // 1. Fetch the current roster: every member and the public key a new
+    // grant must be encapsulated to.
+    let members_res: serde_json::Value = client
+        .get(format!(
+            "{}/projects/{}/members",
+            config.server_url, project_id
+        ))
+        .bearer_auth(token)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let members = members_res
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("expected array from GET /projects/{project_id}/members"))?;
+
+    // 2. Load the current project key (proves we hold a valid key for this
+    // project before we bother minting the next version) and generate its
+    // replacement.
+    let _current_key = load_project_key(config, project_id)?;
+    let new_key = nivrit_crypto::keys::random_bytes::<32>();
+
+    // 3. Encapsulate the new key to every current member's public key.
+    let mut grants = Vec::with_capacity(members.len());
+    for member in members {
+        let user_id = member["user_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("user_id missing in member entry"))?;
+        let public_key_b64 = member["public_key"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("public_key missing in member entry"))?;
+        let public_key = STANDARD.decode(public_key_b64)?;
+        let encapsulated = encapsulate_project_key_hybrid(&new_key, &public_key)?;
+        let encapsulated_json = serde_json::to_vec(&encapsulated)?;
+        grants.push(serde_json::json!({
+            "user_id": user_id,
+            "encrypted_project_key": STANDARD.encode(&encapsulated_json),
+            "project_key_nonce": STANDARD.encode(&[] as &[u8]),
+            "project_key_algorithm": encapsulated.suite,
+        }));
+    }
+    // 4. Submit the rotation.
+    let res: serde_json::Value = client
+        .post(format!(
+            "{}/projects/{}/rotate-key",
+            config.server_url, project_id
+        ))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "grants": grants }))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let version = res["version"]
+        .as_i64()
+        .ok_or_else(|| anyhow::anyhow!("version missing in rotate-key response"))?
+        as i32;
+
+    // 5. Cache the new version locally so subsequent writes use it right away
+    // without a re-login.
+    let state = config
+        .project_keys
+        .entry(project_id.to_string())
+        .or_default();
+    state.versions.push((version, encrypt_local(&new_key)?));
+    state.current_version = version;
+
+    #[derive(Serialize)]
+    struct RotateProjectKeyOut {
+        project_id: String,
+        version: i32,
+        granted_to: usize,
+    }
+    print_output(
+        format,
+        &format!(
+            "rotated project {} to key version {} (granted to {} current members)",
+            project_id,
+            version,
+            grants.len()
+        ),
+        &RotateProjectKeyOut {
+            project_id: project_id.to_string(),
+            version,
+            granted_to: grants.len(),
+        },
+    );
+    Ok(())
 }
 
 async fn invite_member(

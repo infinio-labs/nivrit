@@ -152,6 +152,10 @@ async fn record_access(
     }
 }
 
+fn default_project_key_version() -> i32 {
+    1
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateSecretRequest {
     pub environment_id: Uuid,
@@ -161,6 +165,12 @@ pub struct CreateSecretRequest {
     pub nonce: String,
     #[serde(default = "default_algorithm")]
     pub algorithm: String,
+    /// Which project-key version `encrypted_value` was encrypted under (ADR
+    /// 0008). Defaults to 1 so clients unaware of rotation (a project that's
+    /// never been rotated has no other version to be aware of) keep working
+    /// unchanged.
+    #[serde(default = "default_project_key_version")]
+    pub project_key_version: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -174,6 +184,7 @@ pub struct SecretResponse {
     pub nonce: String,
     pub algorithm: String,
     pub version: i32,
+    pub project_key_version: i32,
 }
 
 pub async fn create_secret(
@@ -207,6 +218,7 @@ pub async fn create_secret(
         &encrypted_value,
         &nonce,
         &req.algorithm,
+        req.project_key_version,
     )
     .await?;
 
@@ -236,6 +248,7 @@ pub async fn create_secret(
         nonce: STANDARD.encode(&row.nonce),
         algorithm: row.algorithm,
         version: row.version,
+        project_key_version: row.project_key_version,
     }))
 }
 
@@ -304,6 +317,7 @@ pub async fn list_secrets(
                 nonce: STANDARD.encode(&row.nonce),
                 algorithm: row.algorithm,
                 version: row.version,
+                project_key_version: row.project_key_version,
             })
             .collect(),
     ))
@@ -356,6 +370,7 @@ pub struct SecretVersionResponse {
     pub encrypted_value: String,
     pub nonce: String,
     pub algorithm: String,
+    pub project_key_version: i32,
     pub created_at: DateTime<Utc>,
 }
 
@@ -389,6 +404,7 @@ pub async fn list_secret_versions(
                 encrypted_value: STANDARD.encode(&v.encrypted_value),
                 nonce: STANDARD.encode(&v.nonce),
                 algorithm: v.algorithm,
+                project_key_version: v.project_key_version,
                 created_at: v.created_at,
             })
             .collect(),
@@ -451,6 +467,7 @@ pub async fn restore_secret(
         nonce: STANDARD.encode(&row.nonce),
         algorithm: row.algorithm,
         version: row.version,
+        project_key_version: row.project_key_version,
     }))
 }
 
@@ -499,5 +516,6 @@ pub async fn get_secret(
         nonce: STANDARD.encode(&row.nonce),
         algorithm: row.algorithm,
         version: row.version,
+        project_key_version: row.project_key_version,
     }))
 }

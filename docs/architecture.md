@@ -167,16 +167,31 @@ which is what lets an account created in the browser log in from the CLI.
   `private_key_nonce`, and a keyed HMAC-SHA256 of the client-derived `auth_hash`
   (not a second Argon2id pass — see `nivrit-auth/src/credential.rs` for why a fast
   keyed hash, not another slow KDF, is the correct control here).
-- Key rotation is a single transaction covering the key pair, the recovery blob,
-  and every project key. A partial rotation would permanently lock a user out.
+- Personal keypair rotation (`rotate-key`) is a single transaction covering the key
+  pair, the recovery blob, and every project-key *version* the user holds — not just
+  the current one, since a user who's been through a project rotation (below) holds
+  more than one. A partial rotation would permanently lock a user out of whichever
+  versions were left behind.
 - Project keys are envelope-encrypted under each member's public key, so adding/removing
   access re-encrypts the envelope without exposing plaintext to the server.
+- Project-key rotation (`rotate-project-key`, [ADR 0008](adr/0008-versioned-project-keys.md))
+  mints a new version of a project's symmetric key and grants it only to current
+  members, without touching any existing secret. A removed member is denied
+  everything created from that point forward; historical secrets stay readable under
+  whichever version encrypted them, by design — the same envelope-rotation pattern
+  NIST SP 800-57, AWS KMS, and HashiCorp Vault use.
 
 ## Future work
 
-- Background re-encryption worker for project-key rotation and algorithm upgrades
-  (rotation today re-wraps the existing project key to a new user keypair; it does
-  not generate a new project key or re-encrypt stored secrets — see `RESEARCH.md` §5/§9).
+- Optional bulk re-encryption ("collapse to latest version") for project keys, so an
+  org can fully destroy an old key version's usefulness rather than just add a new
+  one. Project-key rotation itself (mint a new version, grant it to current members,
+  leave existing ciphertext alone) is done — see "Key-management notes" above and
+  [ADR 0008](adr/0008-versioned-project-keys.md) — this would run client-side on top
+  of it, the way Vault's `rewrap` or AWS's `ReEncrypt` sit on top of their own
+  rotation.
+- Wire the web UI and non-Rust SDKs to versioned project keys (server + CLI only so
+  far — see ADR 0008's consequences section).
 - Secret versioning and rollback.
 - Audit log streaming.
 - Environment- and folder-scoped RBAC. Role checks are enforced today

@@ -120,6 +120,10 @@ pub struct SecretRow {
     pub nonce: Vec<u8>,
     pub algorithm: String,
     pub version: i32,
+    /// Which `project_key_versions.version` this ciphertext is encrypted
+    /// under -- not the same as `version` above, which is this secret's own
+    /// edit-history counter.
+    pub project_key_version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -154,7 +158,36 @@ pub struct SecretVersionRow {
     pub nonce: Vec<u8>,
     pub version: i32,
     pub algorithm: String,
+    pub project_key_version: i32,
     pub created_at: DateTime<Utc>,
+}
+
+/// One minted version of a project's symmetric key (ADR 0008).
+#[derive(Debug, FromRow)]
+pub struct ProjectKeyVersionRow {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub version: i32,
+    pub created_at: DateTime<Utc>,
+    pub created_by: Option<Uuid>,
+}
+
+/// One member's envelope-encrypted wrap of one project-key version.
+#[derive(Debug, FromRow)]
+pub struct ProjectKeyGrantRow {
+    pub version: i32,
+    pub encrypted_project_key: Vec<u8>,
+    pub project_key_nonce: Vec<u8>,
+    pub project_key_algorithm: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A current project member and the public key a rotation grant should be
+/// encapsulated to.
+#[derive(Debug, FromRow)]
+pub struct ProjectMemberKeyRow {
+    pub user_id: Uuid,
+    pub public_key: Vec<u8>,
 }
 
 #[derive(Debug, FromRow)]
