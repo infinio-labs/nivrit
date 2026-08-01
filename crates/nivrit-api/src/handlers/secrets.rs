@@ -14,7 +14,7 @@ use crate::{
     auth::CurrentUser,
     error::ApiError,
     handlers::authz::{require_project_member, require_role},
-    signing::{AuditLogMessage, SignedAuditLog},
+    signing::AuditLogMessage,
     state::AppState,
 };
 use chrono::{DateTime, SubsecRound, Utc};
@@ -38,18 +38,54 @@ fn default_algorithm() -> String {
     "aes256gcm-v1".into()
 }
 
+/// Sign and record one access-log entry, chained to its project's prior
+/// entry, logging (not silently dropping) any failure to do so.
+///
+/// This is best-effort by design, not by accident: failing the secret
+/// read/write itself because the audit table hiccuped would turn an
+/// observability problem into an availability one. But "best-effort" and
+/// "silent" are different things - a signed audit trail that can lose entries
+/// without anyone noticing isn't one you can rely on for anything.
+///
+/// The chain lock is acquired first and held until the row commits, so two
+/// concurrent writes for the same project can't both link to the same prior
+/// entry (see `queries::begin_access_log_chain`).
 #[allow(clippy::too_many_arguments)]
-fn build_signed_audit_log(
+async fn record_access(
     state: &AppState,
     project_id: Uuid,
     environment_id: Option<Uuid>,
+    secret_id: Option<Uuid>,
     user_id: Uuid,
     action: &str,
     key: &str,
+    ip: &str,
+    user_agent: Option<&str>,
     created_at: DateTime<Utc>,
-) -> Option<SignedAuditLog> {
-    let msg = AuditLogMessage::new(project_id, environment_id, user_id, action, key, created_at);
-    match state
+) {
+    let (mut tx, prev_hash, chain_seq) =
+        match queries::begin_access_log_chain(&state.db, project_id).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    project_id = %project_id, action, key, error = %e,
+                    "failed to open audit-log chain; this access was not logged"
+                );
+                return;
+            }
+        };
+
+    let msg = AuditLogMessage::new(
+        project_id,
+        environment_id,
+        user_id,
+        action,
+        key,
+        created_at,
+        prev_hash.as_deref(),
+    );
+
+    let signed = match state
         .signature_service
         .as_ref()
         .map(|svc| svc.sign_audit_log(&msg))
@@ -67,42 +103,21 @@ fn build_signed_audit_log(
             None
         }
         None => None,
-    }
-}
+    };
 
-/// Sign and record one access-log entry, logging (not silently dropping) any
-/// failure to do so.
-///
-/// This is best-effort by design, not by accident: failing the secret
-/// read/write itself because the audit table hiccuped would turn an
-/// observability problem into an availability one. But "best-effort" and
-/// "silent" are different things - a signed audit trail that can lose entries
-/// without anyone noticing isn't one you can rely on for anything.
-#[allow(clippy::too_many_arguments)]
-async fn record_access(
-    state: &AppState,
-    project_id: Uuid,
-    environment_id: Option<Uuid>,
-    secret_id: Option<Uuid>,
-    user_id: Uuid,
-    action: &str,
-    key: &str,
-    ip: &str,
-    user_agent: Option<&str>,
-    created_at: DateTime<Utc>,
-) {
-    let signed = build_signed_audit_log(
-        state,
-        project_id,
-        environment_id,
-        user_id,
-        action,
-        key,
-        created_at,
-    );
+    let entry_hash = match crate::signing::entry_hash(&msg, signed.as_ref()) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(
+                project_id = %project_id, action, key, error = %e,
+                "failed to compute audit-log chain hash; this access was not logged"
+            );
+            return;
+        }
+    };
 
-    if let Err(e) = queries::insert_access_log(
-        &state.db,
+    let inserted = queries::insert_access_log_chained(
+        &mut tx,
         project_id,
         environment_id,
         secret_id,
@@ -115,12 +130,24 @@ async fn record_access(
         signed.as_ref().map(|s| s.algorithm.as_str()),
         signed.as_ref().map(|s| s.signature.as_slice()),
         signed.as_ref().map(|s| s.public_key.as_slice()),
+        chain_seq,
+        prev_hash.as_deref(),
+        &entry_hash,
     )
-    .await
-    {
+    .await;
+
+    if let Err(e) = inserted {
         tracing::error!(
             project_id = %project_id, action, key, error = %e,
             "failed to record audit log entry; this access was not logged"
+        );
+        return;
+    }
+
+    if let Err(e) = tx.commit().await {
+        tracing::error!(
+            project_id = %project_id, action, key, error = %e,
+            "failed to commit audit log entry; this access was not logged"
         );
     }
 }

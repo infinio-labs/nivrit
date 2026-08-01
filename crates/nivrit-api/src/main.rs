@@ -187,6 +187,10 @@ async fn main() -> anyhow::Result<()> {
             "/projects/{project_id}/audit-logs/{log_id}/verify",
             get(handlers::audit::verify_access_log),
         )
+        .route(
+            "/projects/{project_id}/audit-logs/verify-chain",
+            get(handlers::audit::verify_access_log_chain),
+        )
         .route("/users/public-key", get(handlers::users::get_public_key))
         .route("/users/me", get(handlers::users::get_me))
         .route("/users/me/orgs", get(handlers::users::get_my_orgs))

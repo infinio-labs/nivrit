@@ -24,7 +24,9 @@ services:
     # All secrets and deployment config are injected at runtime from .env.docker
     # (copy .env.docker.example and fill it in). Nothing here is baked into the
     # published image. NIVRIT_AUTH_SECRET and NIVRIT_TOTP_ENCRYPTION_KEY are
-    # required — the API refuses to start without real values.
+    # required — the API refuses to start without real values. Audit-log
+    # signing also requires a decision: set NIVRIT_SIGNING_KEY_SEED to a real
+    # seed, or set NIVRIT_AUDIT_SIGNING_DISABLED=true to run without it.
     env_file:
       - .env.docker
     ports:

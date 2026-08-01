@@ -2,7 +2,7 @@
 
 **Project:** Nivrit (client-side end-to-end encrypted secret manager)  
 **Path:** `/home/sid/Projects/InfinioLabs/nivrit`  
-**Last updated:** 2026-07-31
+**Last updated:** 2026-08-01
 
 This document captures the implementation progress across all roadmap phases, testing, tooling, and dependency hygiene.
 
@@ -25,8 +25,9 @@ This document captures the implementation progress across all roadmap phases, te
 | Org-role gate on create_project | ✅ Done | `create_project` requires `Member`+ in the target org, not just membership, so an org `Viewer` can't create a project and become its admin. |
 | SQLx error sanitization | ✅ Done | `queries::map_db_error` maps unique violations to `Conflict` (→ 409) and returns opaque `Internal` for other DB errors. |
 | Audit logging | ✅ Done | `access_logs` table records `read`/`write`/`delete` events on secrets; `GET /projects/{id}/audit-logs` for admins. `list_secrets`, `get_secret`, `create_secret`, and `delete_secret` all write audit logs; failures to write are logged, not silently dropped. |
-| Audit-log PQ signatures | ✅ Done | Each audit-log entry is signed with ML-DSA-65 over a canonical JSON payload. `GET /projects/{id}/audit-logs/{log_id}/verify` checks the signature. Configurable via `NIVRIT_SIGNING_KEY_SEED`. |
-| Login hardening | ✅ Done | Postgres-backed rate limiter (`login_attempts` table, shared across instances) locks out after 5 failed attempts in 15 minutes; cleared on success. Same limiter also gates registration, TOTP login/verify/disable, and `forgot_password`. |
+| Audit-log PQ signatures | ✅ Done | Each audit-log entry is signed with ML-DSA-65 over a canonical JSON payload. `GET /projects/{id}/audit-logs/{log_id}/verify` checks one entry's signature. Signing is required at startup — set `NIVRIT_SIGNING_KEY_SEED` or explicitly opt out with `NIVRIT_AUDIT_SIGNING_DISABLED=true`; there is no silent default. |
+| Audit-log hash chaining | ✅ Done | Each entry's signed payload includes `prev_hash`, chaining it to the prior entry in that project's trail (`chain_seq`, `entry_hash` columns); `GET /projects/{id}/audit-logs/verify-chain` walks the whole chain and detects a deleted, reordered, or spliced entry, which a lone per-entry signature cannot. Verified live against a real deletion during implementation. |
+| Login hardening | ✅ Done | Postgres-backed rate limiter (`login_attempts` table, shared across instances). Identifier-scoped buckets (email, user id) lock out after 5 failed attempts in 15 minutes; the paired IP-scoped bucket is deliberately more permissive (30/15min) so a shared NAT/CGNAT/proxy address isn't collectively locked out by one bad actor or unrelated noise — the identifier bucket is what actually stops credential stuffing, since it can't be evaded by rotating source IPs. Same shape gates registration, TOTP login/verify/disable, and `forgot_password`. |
 | CORS origin restriction | ✅ Done | `NIVRIT_CORS_ORIGIN` config restricts allowed origin; defaults to `Any` with a warning when unset. |
 | Secret CRUD completeness | ✅ Done | `list_secrets`, `delete_secret`, `list_projects`, and `list_environments` endpoints; CLI and web dashboard updated. `delete_secret` returns `NotFound` when the key is absent and captures the deleted `secret_id` for the audit trail. |
 | Key rotation authorization | ✅ Done | `POST /users/me/rotate-key` verifies project membership + `Member` role for each rotated membership key before updating it. |
@@ -179,9 +180,10 @@ All commands currently pass.
 
 ## 5. Remaining Work & Known Gaps
 
-1. **Rate-limiter scaling:** Login rate limiting is in-memory and single-instance; replace with a distributed backend when scaling horizontally.
-2. **JWT/TLS certificate PQ signatures:** ML-DSA is wired into application-level audit-log signing. SLH-DSA and replacing HMAC JWT or X.509 TLS certs with PQ signatures are deferred until a maintained implementation and ecosystem support mature.
-3. **Operational docs for cloud KEKs:** Add example IAM/RBAC policies and Terraform snippets for AWS KMS and Azure Key Vault KEKs.
+1. **JWT/TLS certificate PQ signatures:** ML-DSA is wired into application-level audit-log signing. SLH-DSA and replacing HMAC JWT or X.509 TLS certs with PQ signatures are deferred until a maintained implementation and ecosystem support mature.
+2. **Operational docs for cloud KEKs:** Add example IAM/RBAC policies and Terraform snippets for AWS KMS and Azure Key Vault KEKs.
+3. **RBAC is project-scoped only, not environment/folder-scoped.** `Role` (Admin/Member/Viewer) is assigned per project or org; there is no way to grant, say, Viewer on staging and Member on prod within one project, even though `Environment` and `Folder` already exist as addressable resources. Identified in `RESEARCH.md` §7/§9; deliberately not implemented yet because the right resource-scoping model (per-environment membership? per-folder? both, with inheritance?) is a product decision, not a mechanical fix, and shipping the wrong shape would mean a second migration later. Needs a design pass before implementation.
+4. **Project keys don't rotate.** `POST /users/me/rotate-key` rotates a user's own asymmetric keypair and re-wraps the *existing* project key to the new public key; it does not generate a new project key or re-encrypt already-stored secrets. Identified in `RESEARCH.md` §5/§9 as a real (if currently low-risk) gap: no encryption-count ceiling or forced re-key path exists, so nothing structurally prevents a high-throughput automation workload from approaching the AES-GCM nonce-collision bound on a single long-lived key. Full rotation requires decrypting and re-encrypting every secret in a project and re-encapsulating the new key to every member — deliberately not rushed, since a bug in that path risks permanent data loss, not just a missing feature.
 
 ---
 
@@ -189,3 +191,4 @@ All commands currently pass.
 
 - `docs/architecture.md` — System architecture and threat model.
 - `docs/quantum-readiness-report.md` — Original PQC recommendations and roadmap.
+- `RESEARCH.md` — Independent, citation-backed review of design decisions across the whole product; source of the gaps listed in §5.

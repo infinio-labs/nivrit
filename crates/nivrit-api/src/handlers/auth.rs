@@ -190,7 +190,7 @@ pub async fn login(
     let ip = client_ip(&state, &headers, &addr);
     let ip_key = format!("login-ip|{ip}");
     let email_key = format!("login-email|{}", req.email.trim().to_lowercase());
-    if !state.login_rate_limiter.allow(&ip_key).await?
+    if !state.login_rate_limiter_ip.allow(&ip_key).await?
         || !state.login_rate_limiter.allow(&email_key).await?
     {
         return Err(NivritError::Forbidden.into());
@@ -219,14 +219,14 @@ pub async fn login(
 
     if !credential_ok {
         // Best-effort: a DB hiccup here must not change the auth outcome.
-        let _ = state.login_rate_limiter.record_failure(&ip_key).await;
+        let _ = state.login_rate_limiter_ip.record_failure(&ip_key).await;
         let _ = state.login_rate_limiter.record_failure(&email_key).await;
         return Err(NivritError::Unauthorized.into());
     }
 
     // credential_ok == true guarantees the lookup succeeded.
     let row = row?;
-    let _ = state.login_rate_limiter.record_success(&ip_key).await;
+    let _ = state.login_rate_limiter_ip.record_success(&ip_key).await;
     let _ = state.login_rate_limiter.record_success(&email_key).await;
 
     if row.totp_enabled {
@@ -265,7 +265,7 @@ pub async fn login_totp(
     // attack from rotating IPs around the account bucket.
     let ip_key = format!("totp-login-ip|{}", client_ip(&state, &headers, &addr));
     let user_key = format!("totp-login-user|{}", claims.sub);
-    if !state.login_rate_limiter.allow(&ip_key).await?
+    if !state.login_rate_limiter_ip.allow(&ip_key).await?
         || !state.login_rate_limiter.allow(&user_key).await?
     {
         return Err(NivritError::Forbidden.into());
@@ -289,20 +289,20 @@ pub async fn login_totp(
     let secret = nivrit_auth::totp::decrypt_secret(ciphertext, nonce, &totp_key)
         .map_err(|_| NivritError::Internal("failed to decrypt TOTP secret".into()))?;
     let Some(step) = nivrit_auth::totp::verify_code_step(&secret, &req.code) else {
-        let _ = state.login_rate_limiter.record_failure(&ip_key).await;
+        let _ = state.login_rate_limiter_ip.record_failure(&ip_key).await;
         let _ = state.login_rate_limiter.record_failure(&user_key).await;
         return Err(NivritError::Unauthorized.into());
     };
     // Reject replay: a code's time step must be strictly newer than the last used.
     if let Some(last) = queries::get_totp_last_step(&state.db, row.id).await? {
         if step <= last as u64 {
-            let _ = state.login_rate_limiter.record_failure(&ip_key).await;
+            let _ = state.login_rate_limiter_ip.record_failure(&ip_key).await;
             let _ = state.login_rate_limiter.record_failure(&user_key).await;
             return Err(NivritError::Unauthorized.into());
         }
     }
     queries::set_totp_last_step(&state.db, row.id, step as i64).await?;
-    let _ = state.login_rate_limiter.record_success(&ip_key).await;
+    let _ = state.login_rate_limiter_ip.record_success(&ip_key).await;
     let _ = state.login_rate_limiter.record_success(&user_key).await;
 
     let token = state.jwt.sign(row.id, row.email.clone())?;
@@ -568,10 +568,10 @@ pub async fn forgot_password(
     // is that its response never varies with anything an attacker controls.
     let ip_key = format!("forgot-password-ip|{}", client_ip(&state, &headers, &addr));
     let email_key = format!("forgot-password-email|{}", req.email.trim().to_lowercase());
-    if state.login_rate_limiter.allow(&ip_key).await?
+    if state.login_rate_limiter_ip.allow(&ip_key).await?
         && state.login_rate_limiter.allow(&email_key).await?
     {
-        let _ = state.login_rate_limiter.record_attempt(&ip_key).await;
+        let _ = state.login_rate_limiter_ip.record_attempt(&ip_key).await;
         let _ = state.login_rate_limiter.record_attempt(&email_key).await;
     } else {
         return Ok(Json(serde_json::json!({ "sent": true })));

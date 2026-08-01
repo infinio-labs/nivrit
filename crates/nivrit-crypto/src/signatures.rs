@@ -1,11 +1,19 @@
-//! Post-quantum and hybrid signature support.
+//! Post-quantum signature support.
 //!
-//! Phase 4 of the Nivrit roadmap evaluates NIST-standardized post-quantum
-//! signature schemes for long-lived audit signatures and non-repudiation.
-//!
-//! For operational continuity, a hybrid mode combining an ECDSA/P-256 or
-//! Ed25519 classical signature with an ML-DSA signature is the recommended
-//! deployment pattern until PQ algorithms have broad ecosystem support.
+//! Nivrit signs audit-log entries with pure ML-DSA-65 (see
+//! `nivrit-api/src/signing.rs`) rather than a hybrid classical+ML-DSA scheme.
+//! An earlier draft of this comment called hybrid signing "the recommended
+//! deployment pattern" without the codebase ever implementing it -- that was
+//! aspirational, not descriptive, and has been corrected (see `RESEARCH.md`
+//! §4 and §9.1). Pure ML-DSA-65 was kept deliberately: audit-log signatures
+//! are already re-verified against a hash chain (`entry_hash`/`prev_hash` in
+//! `nivrit-api/src/signing.rs`), so the marginal benefit of a second classical
+//! signature is smaller here than in a context with no such chain, and adding
+//! one now would mean re-signing or dual-signing every future entry against a
+//! second key this crate does not otherwise need. If ML-DSA is ever broken and
+//! a hybrid becomes necessary, add it as a second `Signer` behind the same
+//! trait boundary below rather than replacing this one, so historical
+//! signatures remain verifiable.
 //!
 //! This module provides concrete ML-DSA-65/87 implementations behind the
 //! `pq-signatures` feature. Ed25519/ECDSA and other parameter sets can be added

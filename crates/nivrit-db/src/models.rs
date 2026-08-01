@@ -181,4 +181,11 @@ pub struct AccessLogRow {
     pub signature_algorithm: Option<String>,
     pub signature: Option<Vec<u8>>,
     pub signing_public_key: Option<Vec<u8>>,
+    /// Position in this project's audit-log hash chain, starting at 1.
+    pub chain_seq: i64,
+    /// Hash of the previous entry in this project's chain. `None` only for
+    /// `chain_seq == 1`.
+    pub prev_hash: Option<Vec<u8>>,
+    /// This entry's own chain hash -- becomes the next entry's `prev_hash`.
+    pub entry_hash: Option<Vec<u8>>,
 }

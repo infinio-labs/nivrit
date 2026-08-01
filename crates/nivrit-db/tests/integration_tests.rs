@@ -300,8 +300,14 @@ async fn access_log_insert_and_list() {
     let env_id = create_test_environment(&pool, project_id).await;
 
     let created_at = Utc::now();
-    let log = queries::insert_access_log(
-        &pool,
+    let (mut tx, prev_hash, chain_seq) = queries::begin_access_log_chain(&pool, project_id)
+        .await
+        .expect("begin_access_log_chain failed");
+    assert_eq!(chain_seq, 1);
+    assert!(prev_hash.is_none());
+
+    let log = queries::insert_access_log_chained(
+        &mut tx,
         project_id,
         Some(env_id),
         None,
@@ -314,19 +320,79 @@ async fn access_log_insert_and_list() {
         None,
         None,
         None,
+        chain_seq,
+        prev_hash.as_deref(),
+        b"test-entry-hash",
     )
     .await
-    .expect("insert_access_log failed");
+    .expect("insert_access_log_chained failed");
+    tx.commit().await.expect("commit failed");
 
     assert_eq!(log.action, "read");
     assert_eq!(log.key, "API_KEY");
     assert!(log.signature_algorithm.is_none());
+    assert_eq!(log.chain_seq, 1);
+    assert!(log.prev_hash.is_none());
 
     let logs = queries::list_access_logs(&pool, project_id, 10)
         .await
         .expect("list_access_logs failed");
     assert!(!logs.is_empty());
     assert!(logs.iter().any(|l| l.id == log.id));
+}
+
+#[tokio::test]
+async fn access_log_chain_links_sequential_entries() {
+    let pool = setup_pool().await;
+    let org_id = create_test_org(&pool).await;
+    let user_id = create_test_user(&pool).await;
+    queries::add_org_member(&pool, org_id, user_id, Role::Admin)
+        .await
+        .unwrap();
+    let project_id = create_test_project(&pool, org_id).await;
+    let env_id = create_test_environment(&pool, project_id).await;
+
+    async fn insert_one(
+        pool: &nivrit_db::DbPool,
+        project_id: Uuid,
+        env_id: Uuid,
+        user_id: Uuid,
+        entry_hash: &[u8],
+    ) -> nivrit_db::models::AccessLogRow {
+        let (mut tx, prev_hash, chain_seq) = queries::begin_access_log_chain(pool, project_id)
+            .await
+            .unwrap();
+        let row = queries::insert_access_log_chained(
+            &mut tx,
+            project_id,
+            Some(env_id),
+            None,
+            user_id,
+            "read",
+            "API_KEY",
+            None,
+            None,
+            Utc::now(),
+            None,
+            None,
+            None,
+            chain_seq,
+            prev_hash.as_deref(),
+            entry_hash,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        row
+    }
+
+    let first = insert_one(&pool, project_id, env_id, user_id, b"hash-one").await;
+    let second = insert_one(&pool, project_id, env_id, user_id, b"hash-two").await;
+
+    assert_eq!(first.chain_seq, 1);
+    assert!(first.prev_hash.is_none());
+    assert_eq!(second.chain_seq, 2);
+    assert_eq!(second.prev_hash.as_deref(), Some(b"hash-one".as_slice()));
 }
 
 #[tokio::test]

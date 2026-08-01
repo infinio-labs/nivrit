@@ -11,6 +11,7 @@ use nivrit_crypto::signatures::{
     MlDsa65Signer, MlDsa65Verifier, SignatureAlgorithm, Signer as _, Verifier as _,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// Canonical message signed for each audit-log entry.
@@ -23,6 +24,15 @@ use uuid::Uuid;
 /// `NULL` when a secret is deleted (`ON DELETE SET NULL`). If the signature
 /// depended on `secret_id`, deleting a secret would invalidate the signatures
 /// of all prior audit entries for that key.
+///
+/// `prev_hash` chains this entry to the one before it in the same project's
+/// audit trail (see [`entry_hash`]). It is `None` only for the first entry in
+/// a project's chain. Because it is part of the *signed* payload, an attacker
+/// with database write access cannot splice in, delete, or reorder an entry
+/// without either breaking the chain (a mismatched `prev_hash` on the next
+/// entry) or forging a signature over the new link -- a signature alone,
+/// without this field, only proves a given row's own content wasn't altered,
+/// not that no row was ever removed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditLogMessage {
     pub project_id: Uuid,
@@ -31,9 +41,11 @@ pub struct AuditLogMessage {
     pub action: String,
     pub key: String,
     pub created_at: String,
+    pub prev_hash: Option<String>,
 }
 
 impl AuditLogMessage {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         project_id: Uuid,
         environment_id: Option<Uuid>,
@@ -41,6 +53,7 @@ impl AuditLogMessage {
         action: &str,
         key: &str,
         created_at: DateTime<Utc>,
+        prev_hash: Option<&[u8]>,
     ) -> Self {
         Self {
             project_id,
@@ -51,12 +64,29 @@ impl AuditLogMessage {
             // Truncate to microseconds before signing so the canonical payload
             // matches the value that PostgreSQL timestamptz will store.
             created_at: created_at.trunc_subsecs(6).to_rfc3339(),
+            prev_hash: prev_hash.map(|h| STANDARD.encode(h)),
         }
     }
 
     fn canonical_bytes(&self) -> Result<Vec<u8>> {
         serde_json::to_vec(self).map_err(|e| NivritError::Crypto(e.to_string()))
     }
+}
+
+/// Compute this entry's hash: the value the *next* entry in the same
+/// project's chain must reference as its `prev_hash`.
+///
+/// Covers the canonical message bytes (which already include this entry's own
+/// `prev_hash`) plus the signature material, if any, so a forged or stripped
+/// signature also breaks the chain rather than silently passing it forward.
+pub fn entry_hash(msg: &AuditLogMessage, signed: Option<&SignedAuditLog>) -> Result<Vec<u8>> {
+    let mut hasher = Sha256::new();
+    hasher.update(msg.canonical_bytes()?);
+    if let Some(s) = signed {
+        hasher.update(s.algorithm.as_bytes());
+        hasher.update(&s.signature);
+    }
+    Ok(hasher.finalize().to_vec())
 }
 
 /// The signature material stored alongside an audit-log row.
@@ -152,7 +182,28 @@ mod tests {
             "read",
             "API_KEY",
             Utc::now(),
+            None,
         )
+    }
+
+    #[test]
+    fn entry_hash_changes_with_prev_hash() {
+        let msg_a = message();
+        let mut msg_b = message();
+        msg_b.prev_hash = Some("deadbeef".into());
+        let ha = entry_hash(&msg_a, None).unwrap();
+        let hb = entry_hash(&msg_b, None).unwrap();
+        assert_ne!(ha, hb, "entry_hash must depend on prev_hash");
+    }
+
+    #[test]
+    fn entry_hash_changes_with_signature() {
+        let svc = service();
+        let msg = message();
+        let signed = svc.sign_audit_log(&msg).unwrap();
+        let unsigned_hash = entry_hash(&msg, None).unwrap();
+        let signed_hash = entry_hash(&msg, Some(&signed)).unwrap();
+        assert_ne!(unsigned_hash, signed_hash);
     }
 
     #[test]

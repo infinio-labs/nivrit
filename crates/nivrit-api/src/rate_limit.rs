@@ -6,8 +6,17 @@ use nivrit_db::{queries, DbPool};
 /// Postgres-backed login rate limiter.
 ///
 /// State lives in the `login_attempts` table, so every API instance enforces one
-/// shared limit per key (`email|ip`). After `max_attempts` failures within
-/// `window`, the key is locked out for `lockout`. State is cleared on success.
+/// shared limit per key. After `max_attempts` failures within `window`, the key
+/// is locked out for `lockout`. State is cleared on success.
+///
+/// This type is a single bucket keyed on whatever string the caller passes in
+/// -- it does not itself know about IPs or emails. Callers combine two
+/// independent instances (see `AppState::login_rate_limiter` and
+/// `login_rate_limiter_ip`) keyed separately on identifier (email/user id) and
+/// on IP, and require both to allow an attempt. That two-bucket AND is what
+/// actually defeats an attacker rotating source IPs against one account; a
+/// single bucket keyed on a compound `email|ip` string would not, since a new
+/// IP produces a fresh key with no history.
 #[derive(Clone)]
 pub struct LoginRateLimiter {
     db: DbPool,

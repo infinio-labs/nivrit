@@ -1043,9 +1043,62 @@ pub async fn update_project_member_key(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn insert_access_log(
+/// Open a transaction holding a per-project advisory lock, and return the
+/// hash and next sequence number the caller must chain the new entry onto.
+///
+/// The lock (held for the transaction's lifetime) is what prevents two
+/// concurrent access-log writes for the same project from both reading the
+/// same "latest" entry and forking the chain: the second caller blocks on
+/// this call until the first commits or rolls back. The caller must build and
+/// sign an [`AuditLogMessage`] using the returned `prev_hash` *before*
+/// inserting via [`insert_access_log_chained`], since `prev_hash` is part of
+/// the signed payload, then commit the returned transaction.
+pub async fn begin_access_log_chain(
     pool: &DbPool,
+    project_id: Uuid,
+) -> Result<(
+    sqlx::Transaction<'static, sqlx::Postgres>,
+    Option<Vec<u8>>,
+    i64,
+)> {
+    let mut tx = pool.inner().begin().await.map_err(map_db_error)?;
+
+    sqlx::query!(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        project_id.to_string()
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(map_db_error)?;
+
+    let last = sqlx::query!(
+        r#"
+        SELECT chain_seq, entry_hash
+        FROM access_logs
+        WHERE project_id = $1
+        ORDER BY chain_seq DESC
+        LIMIT 1
+        "#,
+        project_id
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(map_db_error)?;
+
+    let (next_seq, prev_hash) = match last {
+        Some(row) => (row.chain_seq + 1, row.entry_hash),
+        None => (1, None),
+    };
+
+    Ok((tx, prev_hash, next_seq))
+}
+
+/// Insert one access-log entry as the next link in its project's chain.
+/// Must run inside the transaction returned by [`begin_access_log_chain`];
+/// the caller commits once this returns successfully.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_access_log_chained(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_id: Uuid,
     environment_id: Option<Uuid>,
     secret_id: Option<Uuid>,
@@ -1058,18 +1111,23 @@ pub async fn insert_access_log(
     signature_algorithm: Option<&str>,
     signature: Option<&[u8]>,
     signing_public_key: Option<&[u8]>,
+    chain_seq: i64,
+    prev_hash: Option<&[u8]>,
+    entry_hash: &[u8],
 ) -> Result<AccessLogRow> {
     sqlx::query_as!(
         AccessLogRow,
         r#"
         INSERT INTO access_logs (
             project_id, environment_id, secret_id, user_id, action, key,
-            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key
+            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key,
+            chain_seq, prev_hash, entry_hash
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING
             id, project_id, environment_id, secret_id, user_id, action, key,
-            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key
+            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key,
+            chain_seq, prev_hash, entry_hash
         "#,
         project_id,
         environment_id,
@@ -1082,9 +1140,12 @@ pub async fn insert_access_log(
         created_at,
         signature_algorithm,
         signature,
-        signing_public_key
+        signing_public_key,
+        chain_seq,
+        prev_hash,
+        entry_hash
     )
-    .fetch_one(pool.inner())
+    .fetch_one(&mut **tx)
     .await
     .map_err(map_db_error)
 }
@@ -1099,7 +1160,8 @@ pub async fn list_access_logs(
         r#"
         SELECT
             id, project_id, environment_id, secret_id, user_id, action, key,
-            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key
+            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key,
+            chain_seq, prev_hash, entry_hash
         FROM access_logs
         WHERE project_id = $1
         ORDER BY created_at DESC
@@ -1119,7 +1181,8 @@ pub async fn get_access_log(pool: &DbPool, project_id: Uuid, log_id: Uuid) -> Re
         r#"
         SELECT
             id, project_id, environment_id, secret_id, user_id, action, key,
-            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key
+            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key,
+            chain_seq, prev_hash, entry_hash
         FROM access_logs
         WHERE project_id = $1 AND id = $2
         "#,
@@ -1129,6 +1192,28 @@ pub async fn get_access_log(pool: &DbPool, project_id: Uuid, log_id: Uuid) -> Re
     .fetch_one(pool.inner())
     .await
     .map_err(|_| NivritError::NotFound("access log".into()))
+}
+
+/// Fetch every entry in a project's audit-log chain, oldest first, for full
+/// chain verification (as opposed to [`get_access_log`], which fetches one
+/// entry and can't detect a deleted or reordered row on its own).
+pub async fn list_access_log_chain(pool: &DbPool, project_id: Uuid) -> Result<Vec<AccessLogRow>> {
+    sqlx::query_as!(
+        AccessLogRow,
+        r#"
+        SELECT
+            id, project_id, environment_id, secret_id, user_id, action, key,
+            ip_address, user_agent, created_at, signature_algorithm, signature, signing_public_key,
+            chain_seq, prev_hash, entry_hash
+        FROM access_logs
+        WHERE project_id = $1
+        ORDER BY chain_seq ASC
+        "#,
+        project_id
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(map_db_error)
 }
 
 /// One project key, re-wrapped to the user's new public key.

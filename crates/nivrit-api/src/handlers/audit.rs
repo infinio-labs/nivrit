@@ -9,7 +9,7 @@ use crate::{
     auth::CurrentUser,
     error::ApiError,
     handlers::authz::{require_project_member, require_role},
-    signing::{AuditLogMessage, SignatureService},
+    signing::{entry_hash, AuditLogMessage, SignatureService, SignedAuditLog},
     state::AppState,
 };
 
@@ -120,6 +120,7 @@ pub async fn verify_access_log(
         &row.action,
         &row.key,
         row.created_at,
+        row.prev_hash.as_deref(),
     );
 
     let signed = crate::signing::SignedAuditLog {
@@ -138,4 +139,139 @@ pub async fn verify_access_log(
             reason: Some(e.to_string()),
         })),
     }
+}
+
+/// Where a project's audit-log chain first fails to verify.
+#[derive(Debug, Serialize)]
+pub struct ChainBreak {
+    pub chain_seq: i64,
+    pub log_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VerifyAccessLogChainResponse {
+    pub total_entries: usize,
+    pub valid: bool,
+    pub first_break: Option<ChainBreak>,
+}
+
+/// Verify a whole project's audit-log chain, not just one entry.
+///
+/// [`verify_access_log`] proves a single row's *content* wasn't altered since
+/// signing; it says nothing about whether a row was deleted or reordered,
+/// because a lone signature has nothing to compare against. This walks every
+/// entry in `chain_seq` order and checks that each one's `prev_hash` matches
+/// the previous entry's recomputed hash and that the sequence has no gaps --
+/// either of which a deletion or splice would break.
+pub async fn verify_access_log_chain(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    axum::extract::Path(project_id): axum::extract::Path<Uuid>,
+) -> ApiResult<Json<VerifyAccessLogChainResponse>> {
+    let membership = require_project_member(&state.db, project_id, user.id).await?;
+    require_role(&membership, Role::Admin)?;
+
+    let rows = queries::list_access_log_chain(&state.db, project_id).await?;
+    let total_entries = rows.len();
+    let mut expected_seq: i64 = 1;
+    let mut expected_prev: Option<Vec<u8>> = None;
+    let mut first_break = None;
+
+    for row in &rows {
+        if row.entry_hash.is_none() {
+            // Predates chaining (backfilled at migration time). Not
+            // independently verifiable, but not a break either -- move the
+            // sequence anchor past it so later, chained entries are still
+            // checked against each other rather than against a row that never
+            // had a hash to link to.
+            expected_seq = row.chain_seq + 1;
+            expected_prev = None;
+            continue;
+        }
+
+        if row.chain_seq != expected_seq {
+            first_break = Some(ChainBreak {
+                chain_seq: expected_seq,
+                log_id: row.id.to_string(),
+                reason: format!(
+                    "expected chain_seq {expected_seq}, found {} -- an entry was likely deleted",
+                    row.chain_seq
+                ),
+            });
+            break;
+        }
+
+        if row.prev_hash != expected_prev {
+            first_break = Some(ChainBreak {
+                chain_seq: row.chain_seq,
+                log_id: row.id.to_string(),
+                reason: "prev_hash does not match the previous entry's hash -- the chain was tampered with or reordered".into(),
+            });
+            break;
+        }
+
+        let msg = AuditLogMessage::new(
+            row.project_id,
+            row.environment_id,
+            row.user_id,
+            &row.action,
+            &row.key,
+            row.created_at,
+            row.prev_hash.as_deref(),
+        );
+
+        let recomputed = match (
+            &row.signature_algorithm,
+            &row.signature,
+            &row.signing_public_key,
+        ) {
+            (Some(alg), Some(sig), Some(pk)) => {
+                let signed = SignedAuditLog {
+                    algorithm: alg.clone(),
+                    signature: sig.clone(),
+                    public_key: pk.clone(),
+                };
+                if SignatureService::verify_audit_log(&msg, &signed).is_err() {
+                    first_break = Some(ChainBreak {
+                        chain_seq: row.chain_seq,
+                        log_id: row.id.to_string(),
+                        reason: "signature verification failed".into(),
+                    });
+                    break;
+                }
+                entry_hash(&msg, Some(&signed))
+            }
+            _ => entry_hash(&msg, None),
+        };
+
+        match recomputed {
+            Ok(h) if Some(&h) == row.entry_hash.as_ref() => {}
+            Ok(_) => {
+                first_break = Some(ChainBreak {
+                    chain_seq: row.chain_seq,
+                    log_id: row.id.to_string(),
+                    reason: "stored entry_hash does not match the recomputed hash -- this entry was tampered with".into(),
+                });
+                break;
+            }
+            Err(e) => {
+                first_break = Some(ChainBreak {
+                    chain_seq: row.chain_seq,
+                    log_id: row.id.to_string(),
+                    reason: format!("failed to recompute chain hash: {e}"),
+                });
+                break;
+            }
+        }
+
+        expected_seq = row.chain_seq + 1;
+        expected_prev = row.entry_hash.clone();
+    }
+
+    Ok(Json(VerifyAccessLogChainResponse {
+        total_entries,
+        valid: first_break.is_none(),
+        first_break,
+    }))
 }

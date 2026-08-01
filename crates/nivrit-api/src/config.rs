@@ -38,8 +38,14 @@ pub struct Config {
     #[serde(default)]
     pub trusted_proxy: bool,
     /// Base64-encoded 32-byte seed for the ML-DSA-65 audit-log signing key.
-    /// If omitted, audit-log signatures are disabled.
+    /// Required unless `audit_signing_disabled` is explicitly set -- see
+    /// `validate()`.
     pub signing_key_seed: Option<String>,
+    /// Explicit opt-out of audit-log signing when `signing_key_seed` is unset.
+    /// Exists so running without signing is a decision visible in config, not
+    /// a default nobody chose.
+    #[serde(default)]
+    pub audit_signing_disabled: bool,
 
     // OAuth
     pub google_client_id: Option<String>,
@@ -93,6 +99,25 @@ impl Config {
             if is_placeholder(key) {
                 anyhow::bail!("NIVRIT_TOTP_ENCRYPTION_KEY is still the example/placeholder value; generate a real key");
             }
+        }
+        match &self.signing_key_seed {
+            Some(seed) if is_placeholder(seed) => {
+                anyhow::bail!(
+                    "NIVRIT_SIGNING_KEY_SEED is still the example/placeholder value; generate a real seed"
+                );
+            }
+            None if !self.audit_signing_disabled => {
+                // An unset seed used to mean "signatures silently disabled" --
+                // a deployment could run indefinitely writing unsigned audit
+                // rows with nobody deciding that on purpose. Require an
+                // explicit choice instead: set a seed, or say out loud that
+                // you don't want signing.
+                anyhow::bail!(
+                    "NIVRIT_SIGNING_KEY_SEED is not set. Either generate one (e.g. `openssl rand -base64 32`) \
+                     or set NIVRIT_AUDIT_SIGNING_DISABLED=true to explicitly run without signed audit logs."
+                );
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -152,6 +177,7 @@ mod tests {
             cors_origin: None,
             trusted_proxy: false,
             signing_key_seed: None,
+            audit_signing_disabled: true,
             google_client_id: None,
             google_client_secret: None,
             github_client_id: None,
@@ -190,6 +216,35 @@ mod tests {
     fn rejects_placeholder_totp_key() {
         let mut c = base();
         c.totp_encryption_key = Some("change-me-to-a-base64-32-byte-key".into());
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_missing_signing_seed_without_explicit_opt_out() {
+        let mut c = base();
+        c.audit_signing_disabled = false;
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_explicit_audit_signing_opt_out() {
+        let mut c = base();
+        c.audit_signing_disabled = true;
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_real_signing_seed() {
+        let mut c = base();
+        c.audit_signing_disabled = false;
+        c.signing_key_seed = Some("a-real-looking-base64-seed-value".into());
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_placeholder_signing_seed() {
+        let mut c = base();
+        c.signing_key_seed = Some("change-this-signing-key-seed".into());
         assert!(c.validate().is_err());
     }
 }

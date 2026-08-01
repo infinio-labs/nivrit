@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Audit-log entries are now hash-chained, so a deleted or reordered entry is
+  detectable, not just a modified one.** A lone per-entry ML-DSA-65 signature
+  proves a given row's content wasn't altered since signing, but has nothing to
+  compare against, so it can't detect a row being removed outright — an operator
+  or attacker with `DELETE` on `access_logs` could previously do so with nothing
+  in the system noticing. Each entry's signed payload now includes a hash of the
+  previous entry in its project's chain (`chain_seq`/`prev_hash`/`entry_hash`
+  columns); `GET /projects/{id}/audit-logs/verify-chain` walks the whole chain
+  and reports the first break. Verified against a real row deletion during
+  implementation, not just unit tests.
+- **Audit-log signing is no longer a silent default.** Previously an unset
+  `NIVRIT_SIGNING_KEY_SEED` just logged a warning and ran with signatures
+  disabled — a deployment could do this indefinitely without anyone deciding it
+  on purpose. The server now refuses to start unless a real seed is set or
+  `NIVRIT_AUDIT_SIGNING_DISABLED=true` is set explicitly.
+- **The login rate limiter's IP-scoped bucket no longer shares its threshold
+  with the identifier-scoped bucket.** Both used the same 5-attempts/15-minute
+  limit, so users behind the same NAT, CGNAT, or corporate proxy could be
+  collectively locked out by one bad actor or by unrelated failures from other
+  users on that address. The per-email/per-user bucket (unchanged) is the actual
+  defense against credential stuffing, since it can't be evaded by rotating
+  source IPs; the paired IP bucket is now deliberately more permissive
+  (30/15min) since its only job is slowing a single host grinding through
+  candidates.
 - **The master password is no longer sent to the server.** Clients now derive an
   opaque `auth_hash` from it and transmit only that, while the key that unwraps
   the private key is derived separately and never leaves the device. Previously

@@ -32,7 +32,19 @@
 //!
 //! This is the same reasoning that already applies to personal access tokens,
 //! which are stored as a plain SHA-256 digest because they too are high-entropy.
-//! Bitwarden uses this shape; 1Password avoids the question entirely with SRP.
+//!
+//! Bitwarden is *not* prior art for this shape, despite an earlier version of
+//! this comment claiming otherwise: Bitwarden's server applies a second, slow,
+//! *unkeyed* PBKDF2 pass to the login hash, not a fast keyed MAC. Palant (2023,
+//! "Bitwarden design flaw: Server side iterations") found that design largely
+//! ineffective, since an attacker holding a stolen vault can skip the
+//! server-side step entirely and brute-force guesses directly against the
+//! client-side-only encryption-key derivation. This module's design does not
+//! share that gap, because the same client-side Argon2id cost governs *both*
+//! `auth_hash` and the encryption key. 1Password's SRP is closer prior art, but
+//! not identical: SRP doesn't eliminate server-held password-derived material,
+//! it changes what a stolen database alone can do with it (a discrete-log-hard
+//! verifier, rather than a directly attackable keyed hash).
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use hkdf::Hkdf;

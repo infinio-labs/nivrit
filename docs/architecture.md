@@ -123,8 +123,13 @@ which is what lets an account created in the browser log in from the CLI.
 - **Store-now-decrypt-later (harvesting) attacks:** the hybrid **X25519 + ML-KEM-768**
   key exchange means intercepted ciphertext cannot be broken by a future quantum computer,
   because the ML-KEM-768 (Kyber) portion is lattice-based and quantum-resistant.
-- **Audit-log forgery:** audit-log signatures use **ML-DSA-65** (Dilithium), so operators
-  can verify log integrity locally and detect tampering.
+- **Audit-log forgery, deletion, and reordering:** every audit-log entry is signed with
+  **ML-DSA-65** (Dilithium) over a payload that includes a hash of the previous entry in
+  its project's chain, so operators can verify not just that a given entry's content is
+  unmodified, but that the sequence itself has no deleted, spliced, or reordered rows —
+  a lone per-entry signature can prove the former but not the latter, since it has
+  nothing to compare against. `GET /projects/{id}/audit-logs/verify-chain` walks the
+  whole chain and reports the first break, if any.
 
 ### Not protected against
 
@@ -159,7 +164,9 @@ which is what lets an account created in the browser log in from the CLI.
 
 - User private keys are encrypted with a key derived from the user's password via
   Argon2id + AES-256-GCM; the server stores only `encrypted_private_key`,
-  `private_key_nonce`, and an Argon2 hash of the client-derived credential.
+  `private_key_nonce`, and a keyed HMAC-SHA256 of the client-derived `auth_hash`
+  (not a second Argon2id pass — see `nivrit-auth/src/credential.rs` for why a fast
+  keyed hash, not another slow KDF, is the correct control here).
 - Key rotation is a single transaction covering the key pair, the recovery blob,
   and every project key. A partial rotation would permanently lock a user out.
 - Project keys are envelope-encrypted under each member's public key, so adding/removing
@@ -167,11 +174,18 @@ which is what lets an account created in the browser log in from the CLI.
 
 ## Future work
 
-- Background re-encryption worker for project-key rotation and algorithm upgrades.
+- Background re-encryption worker for project-key rotation and algorithm upgrades
+  (rotation today re-wraps the existing project key to a new user keypair; it does
+  not generate a new project key or re-encrypt stored secrets — see `RESEARCH.md` §5/§9).
 - Secret versioning and rollback.
 - Audit log streaming.
-- Role-based access control enforcement in the API.
-- ✅ Post-quantum signatures (ML-DSA-65) for audit-log non-repudiation.
+- Environment- and folder-scoped RBAC. Role checks are enforced today
+  (`handlers/authz.rs`), but `Role` is assigned per project/org only, so there is no
+  way to grant, e.g., Viewer on staging and Member on prod within one project even
+  though `Environment` and `Folder` already exist as addressable resources — see
+  `RESEARCH.md` §7/§9.
+- ✅ Post-quantum signatures (ML-DSA-65) for audit-log non-repudiation, hash-chained
+  so deletion and reordering are detectable, not just per-entry content tampering.
 - ✅ HSM/KMS-backed key-encryption keys (AWS KMS, Azure Key Vault).
 - Recovery phrases and key escrow options.
 - Re-encryption worker for project-key rotation and algorithm upgrades.
