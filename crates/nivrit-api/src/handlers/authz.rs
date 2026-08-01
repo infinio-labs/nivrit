@@ -29,6 +29,38 @@ pub fn require_role(membership: &ProjectMemberRow, required: Role) -> Result<Rol
     require_role_str(&membership.role, required)
 }
 
+/// The role gate for an environment-scoped action (secret CRUD, folders,
+/// imports, tags -- ADR 0009). An `environment_memberships` row for this
+/// user overrides their project-level role for this specific environment;
+/// absent one, the project-level role applies exactly as it did before this
+/// table existed, so a project that's never used environment-level grants
+/// sees no behavior change.
+///
+/// Still requires project membership even when an override exists: the
+/// override is a role *substitution* for someone already on the project, not
+/// a side door around project membership. A user who somehow has an
+/// environment-membership row but was removed from the project is rejected
+/// by the `require_project_member` fallback below only when *no* override
+/// row is found -- callers granting overrides are responsible for not
+/// leaving orphaned rows behind after removing someone from a project (no
+/// "remove project member" endpoint exists yet to test this against; noted
+/// as a sharp edge for whenever one is added).
+pub async fn require_environment_role(
+    db: &DbPool,
+    project_id: Uuid,
+    environment_id: Uuid,
+    user_id: Uuid,
+    required: Role,
+) -> Result<Role> {
+    if let Some(env_membership) =
+        queries::get_environment_member(db, environment_id, user_id).await?
+    {
+        return require_role_str(&env_membership.role, required);
+    }
+    let membership = require_project_member(db, project_id, user_id).await?;
+    require_role(&membership, required)
+}
+
 /// Return `Ok(role)` if the org member's role is at least `required`, otherwise
 /// `Forbidden`.
 ///

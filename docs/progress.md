@@ -2,7 +2,7 @@
 
 **Project:** Nivrit (client-side end-to-end encrypted secret manager)  
 **Path:** `/home/sid/Projects/InfinioLabs/nivrit`  
-**Last updated:** 2026-08-01 (versioned project-key rotation, ADR 0008)
+**Last updated:** 2026-08-01 (environment-scoped RBAC, ADR 0009)
 
 This document captures the implementation progress across all roadmap phases, testing, tooling, and dependency hygiene.
 
@@ -32,6 +32,7 @@ This document captures the implementation progress across all roadmap phases, te
 | Secret CRUD completeness | ✅ Done | `list_secrets`, `delete_secret`, `list_projects`, and `list_environments` endpoints; CLI and web dashboard updated. `delete_secret` returns `NotFound` when the key is absent and captures the deleted `secret_id` for the audit trail. |
 | Key rotation authorization | ✅ Done | `POST /users/me/rotate-key` verifies project membership + `Member` role for each rotated membership key before updating it. |
 | Versioned project-key rotation | ✅ Done | `POST /projects/{id}/rotate-key` mints the next version of a project's symmetric key and grants it only to current members (`project_key_versions`/`project_key_grants` tables); `GET /projects/{id}/key-versions` and `GET /projects/{id}/members` support it. No existing secret is touched — matches the NIST/AWS KMS/Vault envelope-rotation pattern rather than bulk re-encryption. Server, CLI (`niv rotate-project-key`), web UI (Members tab, "Rotate key now"), and the Node SDK (`session.rotateProjectKey()`) are wired; Python/Go not yet (see §5). See [ADR 0008](adr/0008-versioned-project-keys.md). |
+| Environment-scoped RBAC | ✅ Done | `environment_memberships` table holds optional per-user, per-environment role overrides that supersede the project-level role for that environment only; absent means the project role applies unchanged. `GET/PUT/DELETE /projects/{id}/environments/{env_id}/members[/{user_id}]` manage overrides (PUT/DELETE require project Admin; target must already be a project member). The 3 secret write handlers (`create_secret`, `delete_secret`, `restore_secret`) are gated through `require_environment_role`; the 3 read handlers were and remain ungated (only require project membership). Server only in this pass — see §5. See [ADR 0009](adr/0009-environment-scoped-rbac.md). |
 
 ### Phase 1 — Transport-level PQC ✅
 
@@ -183,14 +184,15 @@ All commands currently pass.
 
 1. **JWT/TLS certificate PQ signatures:** ML-DSA is wired into application-level audit-log signing. SLH-DSA and replacing HMAC JWT or X.509 TLS certs with PQ signatures are deferred until a maintained implementation and ecosystem support mature.
 2. **Operational docs for cloud KEKs:** Add example IAM/RBAC policies and Terraform snippets for AWS KMS and Azure Key Vault KEKs.
-3. **RBAC is project-scoped only, not environment-scoped.** `Role` (Admin/Member/Viewer) is assigned per project or org; there is no way to grant, say, Viewer on staging and Member on prod within one project. Identified in `RESEARCH.md` §7/§9. Decision made: per-environment membership (folders inherit their environment's role, not independently scoped) — the most common real request ("this contractor should only see staging") with the smallest schema change. In progress.
-4. **No bulk re-encryption / "collapse to latest version" tool for project keys.** Rotation (see the feature table above and [ADR 0008](adr/0008-versioned-project-keys.md)) mints a new version without touching old ciphertext, by design — matching how NIST SP 800-57, AWS KMS, and HashiCorp Vault handle this. An org that wants to fully destroy an old key version's usefulness (not just add a new one) would need every secret re-encrypted onto the latest version, the way Vault's `rewrap` or AWS's `ReEncrypt` work for their own rotation. Not built: would need to run client-side, since nivrit's server never holds `project_key` plaintext.
-5. **Python and Go SDKs are not wired to versioned project keys.** Server, CLI, web
+3. **No bulk re-encryption / "collapse to latest version" tool for project keys.** Rotation (see the feature table above and [ADR 0008](adr/0008-versioned-project-keys.md)) mints a new version without touching old ciphertext, by design — matching how NIST SP 800-57, AWS KMS, and HashiCorp Vault handle this. An org that wants to fully destroy an old key version's usefulness (not just add a new one) would need every secret re-encrypted onto the latest version, the way Vault's `rewrap` or AWS's `ReEncrypt` work for their own rotation. Not built: would need to run client-side, since nivrit's server never holds `project_key` plaintext.
+4. **Python and Go SDKs are not wired to versioned project keys.** Server, CLI, web
    UI, and the Node SDK are. Python/Go still assume one key per project, via the
    pre-existing flat fields that continue to work for any project that's never
    been rotated. After a rotation, those clients can still read anything from
    that point forward but not pre-rotation history. See ADR 0008's consequences
    section.
+5. **Environment RBAC overrides have no CLI/web/SDK management UI.** The server enforces overrides (see the feature table above and [ADR 0009](adr/0009-environment-scoped-rbac.md)); granting, listing, and removing them is only reachable by calling the API directly. A project Admin can't yet do this from `niv` or the web dashboard.
+6. **Environment RBAC does not gate reads.** `list_secrets`/`get_secret`/`list_secret_versions` only require project membership, same as before ADR 0009 — an environment override can restrict/grant *writes* per environment but cannot make one environment read-only while another isn't, since no read-side role gate exists yet to attach an override to.
 
 ---
 

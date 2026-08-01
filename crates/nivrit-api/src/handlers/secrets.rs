@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     auth::CurrentUser,
     error::ApiError,
-    handlers::authz::{require_project_member, require_role},
+    handlers::authz::{require_environment_role, require_project_member},
     signing::AuditLogMessage,
     state::AppState,
 };
@@ -199,8 +199,14 @@ pub async fn create_secret(
         return Err(NivritError::Validation("key required".into()).into());
     }
 
-    let membership = require_project_member(&state.db, project_id, user.id).await?;
-    require_role(&membership, Role::Member)?;
+    require_environment_role(
+        &state.db,
+        project_id,
+        req.environment_id,
+        user.id,
+        Role::Member,
+    )
+    .await?;
 
     let encrypted_value = STANDARD
         .decode(&req.encrypted_value)
@@ -331,8 +337,14 @@ pub async fn delete_secret(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     axum::extract::Query(query): axum::extract::Query<GetSecretQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let membership = require_project_member(&state.db, project_id, user.id).await?;
-    require_role(&membership, Role::Member)?;
+    require_environment_role(
+        &state.db,
+        project_id,
+        query.environment_id,
+        user.id,
+        Role::Member,
+    )
+    .await?;
 
     let _deleted_secret_id = queries::delete_secret(
         &state.db,
@@ -428,8 +440,14 @@ pub async fn restore_secret(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<RestoreSecretRequest>,
 ) -> ApiResult<Json<SecretResponse>> {
-    let membership = require_project_member(&state.db, project_id, user.id).await?;
-    require_role(&membership, Role::Member)?;
+    require_environment_role(
+        &state.db,
+        project_id,
+        req.environment_id,
+        user.id,
+        Role::Member,
+    )
+    .await?;
 
     let row = queries::restore_secret_version(
         &state.db,

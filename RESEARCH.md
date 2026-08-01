@@ -241,7 +241,9 @@ Even though nivrit's zero-knowledge design keeps secret plaintext out of server 
 
 Nivrit's authorization model is a three-value `Role` enum — `Admin`, `Member`, `Viewer` — assigned per organization and per project (`crates/nivrit-core/src/models.rs`), enforced in `crates/nivrit-api/src/handlers/authz.rs`: `require_role`/`require_org_role` look up the caller's membership row and compare rank (`Viewer < Member < Admin`) against what the handler requires. Every mutating handler calls one of these functions explicitly — access control is a per-handler runtime check, not centralized declarative middleware. `authz.rs` itself documents the risk this creates: org membership is not itself a privilege grant, and any handler letting an org member take an org-wide action "must gate on this, not just on `require_org_member` succeeding" — correctness depends on every future handler author remembering the right gate.
 
-This is a legitimate, if minimal, instantiation of RBAC as formalized by Ferraiolo and Kuhn [1], unified by Sandhu, Ferraiolo, and Kuhn [2], and standardized as ANSI/INCITS 359-2012 [3]. Nivrit satisfies the standard's core RBAC0 level but implements nothing from RBAC1 (a role hierarchy — nivrit has only a flat total order) or RBAC2 (constraints like separation of duty). More materially, nivrit's resource hierarchy — Org → Project → Environment → Folder → Secret — is richer than its permission model: `Role` is assigned at the project (or org) level only, so there is no way to grant Viewer access to production and Member access to staging within the same project, even though `Environment` and `Folder` already exist as first-class models. Against more mature competitors — Vault's path-glob ACL policies [4], Infisical's subject–action–object model with custom roles [5], Doppler's per-project and per-config custom roles on Enterprise [6] — a flat, project-scoped, three-rank role is a defensible RBAC minimum but a genuine gap for a secrets manager, where "give this contractor Viewer on staging only" is a common request nivrit cannot currently express without a separate project.
+This is a legitimate, if minimal, instantiation of RBAC as formalized by Ferraiolo and Kuhn [1], unified by Sandhu, Ferraiolo, and Kuhn [2], and standardized as ANSI/INCITS 359-2012 [3]. Nivrit satisfies the standard's core RBAC0 level but implements nothing from RBAC1 (a role hierarchy — nivrit has only a flat total order) or RBAC2 (constraints like separation of duty). More materially, nivrit's resource hierarchy — Org → Project → Environment → Folder → Secret — was richer than its permission model: `Role` was assigned at the project (or org) level only, so there was no way to grant Viewer access to production and Member access to staging within the same project, even though `Environment` and `Folder` already existed as first-class models. Against more mature competitors — Vault's path-glob ACL policies [4], Infisical's subject–action–object model with custom roles [5], Doppler's per-project and per-config custom roles on Enterprise [6] — a flat, project-scoped, three-rank role was a defensible RBAC minimum but a genuine gap for a secrets manager, where "give this contractor Viewer on staging only" is a common request nivrit could not previously express without a separate project.
+
+> **Update (2026-08-01):** this gap is closed for environments, not folders. `environment_memberships` now lets a project Admin set a per-user role override on one environment that supersedes the project-level role there; folders inherit their environment's role rather than getting independent scoping, since folders function as organization within an environment, not a separate trust boundary, in how the product is used. See [ADR 0009](adr/0009-environment-scoped-rbac.md) and §9.1 item 5. This still doesn't add RBAC1/RBAC2 (no role hierarchy beyond the flat rank, no separation-of-duty constraints), and the override only gates the three secret write handlers — reads still require only project membership.
 
 ### 7.2 Rate limiting
 
@@ -327,11 +329,11 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
 
 ### 9.1 Findings that warrant action
 
-> **Status as of 2026-08-01:** items 1, 2, 3, 4, and 6 are fixed (see commit history
-> and the `[Unreleased]` section of `CHANGELOG.md`). Item 5 (RBAC granularity) remains
-> deliberately deferred — it needs a product decision on the resource-scoping shape
-> (per-environment membership? per-folder? inheritance?) that a design pass, not a
-> mechanical fix, should settle. See `docs/progress.md` §5 for current status.
+> **Status as of 2026-08-01:** items 1–6 are all fixed (see commit history and the
+> `[Unreleased]` section of `CHANGELOG.md`). Item 5 (RBAC granularity) was resolved
+> as per-environment role overrides (ADR 0009) after a product decision on the
+> resource-scoping shape; server-side enforcement is done, CLI/web/SDK management
+> UI is not. See `docs/progress.md` §5 for current status.
 
 1. ~~**Audit-log signing is silently optional.**~~ **Fixed.** `Config::validate()` now
    requires either a real `NIVRIT_SIGNING_KEY_SEED` or an explicit
@@ -363,12 +365,16 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
    surfaced a real, separate bug — see §9.5 below — not something worth burying in
    this bullet. Python and Go SDKs are not yet updated — see ADR 0008's
    consequences section. (§5)
-5. **RBAC is flat and project-scoped only**, despite `Environment` and `Folder`
+5. ~~**RBAC is flat and project-scoped only**, despite `Environment` and `Folder`
    already existing as addressable models — no way to grant environment- or
-   folder-level permissions today. A real gap versus Vault, Infisical, and Doppler.
-   **Deferred**: the right resource-scoping shape (per-environment membership?
-   per-folder? inheritance rules?) is a product decision, and shipping the wrong one
-   means a second migration later. Tracked in `docs/progress.md` §5. (§7)
+   folder-level permissions today. A real gap versus Vault, Infisical, and Doppler.~~
+   **Fixed.** Per-environment role overrides (`environment_memberships`) now
+   supersede the project-level role for one environment at a time; folders
+   inherit their environment's role rather than getting an independent scope
+   (see [ADR 0009](adr/0009-environment-scoped-rbac.md)'s rejected-alternatives
+   section for why folder-level and dual-scoped were passed over). Server-side
+   only in this pass — CLI/web/SDK management UI and read-path gating remain
+   open, tracked in `docs/progress.md` §5. (§7)
 6. ~~**The login rate limiter's IP bucket has a shared-address blast radius.**~~
    **Fixed.** IP-scoped buckets (`login-ip|`, `totp-login-ip|`, `forgot-password-ip|`)
    now use a separate, more permissive limiter (30 attempts/15min vs. 5) than the
@@ -440,7 +446,7 @@ This document is a design-decision review, not a penetration test or formal veri
 
 ## 11. Conclusion
 
-Nivrit's core cryptographic architecture — split-derivation authentication, hybrid post-quantum key exchange, crypto-agile symmetric encryption — holds up well against current standards and academic literature, in several places more rigorously than the project's own documentation gave it credit for (the Argon2id/pepper design in particular is stronger, and better-cited, than its own code comments claimed before this review corrected them). The most consequential findings from this review were operational rather than cryptographic: audit-log signing that silently disabled itself, audit-log signatures that didn't protect against deletion, and a project key with no rotation path were all fixable without touching the cryptographic core, and have since been fixed (§9.1) — the audit-log chain verified live against a real row deletion, the project-key rotation verified live across a real two-user session with a mid-flight rotation, not just unit tests in either case. They mattered more in practice than the theoretical maturity gap already tracked in ADR 0007. Building the rotation fix surfaced a second lesson worth naming: the first design considered for it (eager bulk re-encryption) was wrong, and research into how NIST, AWS, and HashiCorp actually handle this class of problem is what caught that before it shipped — worth remembering next time a "safety" fix is being designed under the assumption that touching more data is the safer choice. The RBAC granularity gap is a legitimate product decision rather than a defect fixable by a mechanical patch — it remains open on purpose, tracked in `docs/progress.md` §5, because shipping the wrong shape under time pressure would cost more than the gap itself does today. The licensing trade-off (§8) was never a defect to begin with, just a nuance worth stating plainly instead of implying more than the license actually guarantees.
+Nivrit's core cryptographic architecture — split-derivation authentication, hybrid post-quantum key exchange, crypto-agile symmetric encryption — holds up well against current standards and academic literature, in several places more rigorously than the project's own documentation gave it credit for (the Argon2id/pepper design in particular is stronger, and better-cited, than its own code comments claimed before this review corrected them). The most consequential findings from this review were operational rather than cryptographic: audit-log signing that silently disabled itself, audit-log signatures that didn't protect against deletion, and a project key with no rotation path were all fixable without touching the cryptographic core, and have since been fixed (§9.1) — the audit-log chain verified live against a real row deletion, the project-key rotation verified live across a real two-user session with a mid-flight rotation, not just unit tests in either case. They mattered more in practice than the theoretical maturity gap already tracked in ADR 0007. Building the rotation fix surfaced a second lesson worth naming: the first design considered for it (eager bulk re-encryption) was wrong, and research into how NIST, AWS, and HashiCorp actually handle this class of problem is what caught that before it shipped — worth remembering next time a "safety" fix is being designed under the assumption that touching more data is the safer choice. The RBAC granularity gap was a legitimate product decision rather than a defect fixable by a mechanical patch — it stayed open on purpose until the resource-scoping shape was decided (per-environment, ADR 0009), because shipping the wrong shape under time pressure would have cost more than the gap itself did at the time. What's left (CLI/web/SDK management surface, read-path gating) is tracked in `docs/progress.md` §5. The licensing trade-off (§8) was never a defect to begin with, just a nuance worth stating plainly instead of implying more than the license actually guarantees.
 
 ---
 

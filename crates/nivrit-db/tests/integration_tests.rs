@@ -761,3 +761,103 @@ async fn restore_secret_version_preserves_its_own_project_key_version() {
         "restoring v1's ciphertext must keep v1's key tag, not inherit v2's"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Environment-scoped RBAC (ADR 0009)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn environment_member_override_roundtrip() {
+    let pool = setup_pool().await;
+    let org_id = create_test_org(&pool).await;
+    let user_id = create_test_user(&pool).await;
+    queries::add_org_member(&pool, org_id, user_id, Role::Admin)
+        .await
+        .unwrap();
+    let project_id = create_test_project(&pool, org_id).await;
+    add_test_project_member_with_key(&pool, project_id, user_id).await;
+    let env_id = create_test_environment(&pool, project_id).await;
+
+    // No override yet.
+    assert!(queries::get_environment_member(&pool, env_id, user_id)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(queries::list_environment_members(&pool, env_id)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let set = queries::set_environment_member(&pool, env_id, user_id, Role::Viewer)
+        .await
+        .unwrap();
+    assert_eq!(set.role, "viewer");
+
+    let got = queries::get_environment_member(&pool, env_id, user_id)
+        .await
+        .unwrap()
+        .expect("override should now exist");
+    assert_eq!(got.role, "viewer");
+
+    let listed = queries::list_environment_members(&pool, env_id)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].user_id, user_id);
+
+    queries::remove_environment_member(&pool, env_id, user_id)
+        .await
+        .unwrap();
+    assert!(queries::get_environment_member(&pool, env_id, user_id)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn environment_member_set_replaces_existing_role() {
+    let pool = setup_pool().await;
+    let org_id = create_test_org(&pool).await;
+    let user_id = create_test_user(&pool).await;
+    queries::add_org_member(&pool, org_id, user_id, Role::Admin)
+        .await
+        .unwrap();
+    let project_id = create_test_project(&pool, org_id).await;
+    add_test_project_member_with_key(&pool, project_id, user_id).await;
+    let env_id = create_test_environment(&pool, project_id).await;
+
+    queries::set_environment_member(&pool, env_id, user_id, Role::Viewer)
+        .await
+        .unwrap();
+    let updated = queries::set_environment_member(&pool, env_id, user_id, Role::Admin)
+        .await
+        .unwrap();
+    assert_eq!(updated.role, "admin");
+
+    // Still exactly one row -- an upsert, not a second grant.
+    let listed = queries::list_environment_members(&pool, env_id)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].role, "admin");
+}
+
+/// Confirms the FK relationship an environment override depends on: it
+/// must belong to the same project the caller is checking, otherwise a
+/// mismatched (project_id, environment_id) pair in a URL could target an
+/// environment in a different project entirely.
+#[tokio::test]
+async fn get_environment_by_id_rejects_project_mismatch() {
+    let pool = setup_pool().await;
+    let org_id = create_test_org(&pool).await;
+    let project_a = create_test_project(&pool, org_id).await;
+    let project_b = create_test_project(&pool, org_id).await;
+    let env_in_a = create_test_environment(&pool, project_a).await;
+
+    assert!(queries::get_environment_by_id(&pool, project_a, env_in_a)
+        .await
+        .is_ok());
+    assert!(queries::get_environment_by_id(&pool, project_b, env_in_a)
+        .await
+        .is_err());
+}

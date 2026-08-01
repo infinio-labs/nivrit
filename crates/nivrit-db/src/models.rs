@@ -109,6 +109,18 @@ pub struct ProjectMemberRow {
     pub created_at: DateTime<Utc>,
 }
 
+/// An override of a user's project-level role for one specific environment
+/// (ADR 0009). Presence of a row here means "use this role for this
+/// environment instead of the project-level one," not "this user is a member
+/// of this environment" -- project membership is still required separately.
+#[derive(Debug, FromRow)]
+pub struct EnvironmentMemberRow {
+    pub environment_id: Uuid,
+    pub user_id: Uuid,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, FromRow)]
 pub struct SecretRow {
     pub id: Uuid,

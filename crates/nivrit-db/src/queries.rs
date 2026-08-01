@@ -650,6 +650,96 @@ pub async fn get_project_member(
     .map_err(|_| NivritError::Forbidden)
 }
 
+// ---------------------------------------------------------------------------
+// Environment-scoped RBAC (ADR 0009)
+// ---------------------------------------------------------------------------
+
+/// This user's role override for one environment, if any -- `None` means
+/// "no override, use the project-level role" rather than "not a member."
+pub async fn get_environment_member(
+    pool: &DbPool,
+    environment_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<EnvironmentMemberRow>> {
+    sqlx::query_as!(
+        EnvironmentMemberRow,
+        r#"
+        SELECT environment_id, user_id, role, created_at
+        FROM environment_memberships
+        WHERE environment_id = $1 AND user_id = $2
+        "#,
+        environment_id,
+        user_id
+    )
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(map_db_error)
+}
+
+pub async fn list_environment_members(
+    pool: &DbPool,
+    environment_id: Uuid,
+) -> Result<Vec<EnvironmentMemberRow>> {
+    sqlx::query_as!(
+        EnvironmentMemberRow,
+        r#"
+        SELECT environment_id, user_id, role, created_at
+        FROM environment_memberships
+        WHERE environment_id = $1
+        "#,
+        environment_id
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(map_db_error)
+}
+
+/// Set (insert or replace) a user's role override for one environment.
+/// Callers must independently verify the user already holds a
+/// `project_memberships` row -- this is an override, not a standalone grant
+/// (see the migration's comment and ADR 0009).
+pub async fn set_environment_member(
+    pool: &DbPool,
+    environment_id: Uuid,
+    user_id: Uuid,
+    role: Role,
+) -> Result<EnvironmentMemberRow> {
+    let role_str = role_as_str(role);
+    sqlx::query_as!(
+        EnvironmentMemberRow,
+        r#"
+        INSERT INTO environment_memberships (environment_id, user_id, role)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (environment_id, user_id) DO UPDATE SET role = EXCLUDED.role
+        RETURNING environment_id, user_id, role, created_at
+        "#,
+        environment_id,
+        user_id,
+        role_str
+    )
+    .fetch_one(pool.inner())
+    .await
+    .map_err(map_db_error)
+}
+
+/// Remove a user's environment-level override, reverting them to their
+/// project-level role for that environment.
+pub async fn remove_environment_member(
+    pool: &DbPool,
+    environment_id: Uuid,
+    user_id: Uuid,
+) -> Result<()> {
+    sqlx::query!(
+        "DELETE FROM environment_memberships WHERE environment_id = $1 AND user_id = $2",
+        environment_id,
+        user_id
+    )
+    .execute(pool.inner())
+    .await
+    .map_err(map_db_error)?;
+    Ok(())
+}
+
 pub async fn get_environment(
     pool: &DbPool,
     project_id: Uuid,
@@ -664,6 +754,30 @@ pub async fn get_environment(
         "#,
         project_id,
         slug
+    )
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|_| NivritError::NotFound("environment".into()))
+}
+
+/// Confirm `environment_id` actually belongs to `project_id` -- both come
+/// from the URL path on environment-membership routes, and without this
+/// check a caller could grant or query role overrides for an environment in
+/// a project they don't control by mismatching the two path segments.
+pub async fn get_environment_by_id(
+    pool: &DbPool,
+    project_id: Uuid,
+    environment_id: Uuid,
+) -> Result<EnvironmentRow> {
+    sqlx::query_as!(
+        EnvironmentRow,
+        r#"
+        SELECT id, project_id, name, slug, created_at
+        FROM environments
+        WHERE project_id = $1 AND id = $2
+        "#,
+        project_id,
+        environment_id
     )
     .fetch_one(pool.inner())
     .await

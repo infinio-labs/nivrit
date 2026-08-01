@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Roles can now be overridden per environment, not just set project-wide.**
+  Previously a member's role (`Admin`/`Member`/`Viewer`) applied identically to
+  every environment in a project — there was no way to give someone write
+  access to `staging` without also giving it to `prod`. A new
+  `environment_memberships` table ([ADR 0009](docs/adr/0009-environment-scoped-rbac.md))
+  holds optional per-user, per-environment role overrides that supersede the
+  project-level role for that environment only; absence of an override means
+  the project role applies exactly as before, so no existing project's
+  behavior changes. `GET/PUT/DELETE /projects/{id}/environments/{env_id}/members[/{user_id}]`
+  manage overrides (PUT/DELETE require project Admin; the target must already
+  be a project member — this is an override on top of membership, not a way
+  around it). The three secret write handlers (`create_secret`,
+  `delete_secret`, `restore_secret`) are gated through the new
+  `require_environment_role` check. Verified live: a project Viewer granted a
+  Member override can write to that one environment, remains blocked in every
+  other environment, and reverts to Viewer everywhere once the override is
+  removed; a non-Admin cannot grant overrides; overrides are rejected for a
+  target who isn't already a project member. Server only in this pass — CLI,
+  web UI, and SDKs don't yet expose a way to manage overrides.
 - **Project keys can now be rotated.** Previously `POST /users/me/rotate-key`
   only re-wrapped a project's *existing* symmetric key to a user's new
   personal keypair — there was no way to actually replace it, so a removed

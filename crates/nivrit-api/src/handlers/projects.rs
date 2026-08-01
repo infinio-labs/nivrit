@@ -152,6 +152,98 @@ pub async fn create_environment(
     }))
 }
 
+#[derive(Debug, Serialize)]
+pub struct EnvironmentOverrideResponse {
+    pub user_id: String,
+    pub environment_id: String,
+    pub role: String,
+}
+
+/// Every environment-level role override on `environment_id` (ADR 0009).
+/// Visible to any project member -- knowing who has elevated or restricted
+/// access to an environment isn't itself sensitive, unlike the access it
+/// grants.
+pub async fn list_environment_overrides(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    axum::extract::Path((project_id, environment_id)): axum::extract::Path<(Uuid, Uuid)>,
+) -> ApiResult<Json<Vec<EnvironmentOverrideResponse>>> {
+    require_project_member(&state.db, project_id, user.id).await?;
+    queries::get_environment_by_id(&state.db, project_id, environment_id).await?;
+
+    let rows = queries::list_environment_members(&state.db, environment_id).await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| EnvironmentOverrideResponse {
+                user_id: row.user_id.to_string(),
+                environment_id: row.environment_id.to_string(),
+                role: row.role,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetEnvironmentOverrideRequest {
+    pub role: Role,
+}
+
+/// Grant (or replace) a project member's role override for one environment
+/// (ADR 0009). Admin-only, same bar as inviting a member in the first place
+/// -- an environment-level role is a substitution for someone already
+/// trusted with the project, not a side door around project membership, so
+/// the target must already hold a `project_memberships` row.
+pub async fn set_environment_override(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    axum::extract::Path((project_id, environment_id, target_user_id)): axum::extract::Path<(
+        Uuid,
+        Uuid,
+        Uuid,
+    )>,
+    Json(req): Json<SetEnvironmentOverrideRequest>,
+) -> ApiResult<Json<EnvironmentOverrideResponse>> {
+    let membership = require_project_member(&state.db, project_id, user.id).await?;
+    require_role(&membership, Role::Admin)?;
+    queries::get_environment_by_id(&state.db, project_id, environment_id).await?;
+
+    if queries::get_project_member(&state.db, project_id, target_user_id)
+        .await
+        .is_err()
+    {
+        return Err(
+            NivritError::Validation("target user is not a member of this project".into()).into(),
+        );
+    }
+
+    let row = queries::set_environment_member(&state.db, environment_id, target_user_id, req.role)
+        .await?;
+    Ok(Json(EnvironmentOverrideResponse {
+        user_id: row.user_id.to_string(),
+        environment_id: row.environment_id.to_string(),
+        role: row.role,
+    }))
+}
+
+/// Remove a role override, reverting the user to their project-level role
+/// for this environment (ADR 0009). Admin-only.
+pub async fn remove_environment_override(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    axum::extract::Path((project_id, environment_id, target_user_id)): axum::extract::Path<(
+        Uuid,
+        Uuid,
+        Uuid,
+    )>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let membership = require_project_member(&state.db, project_id, user.id).await?;
+    require_role(&membership, Role::Admin)?;
+    queries::get_environment_by_id(&state.db, project_id, environment_id).await?;
+
+    queries::remove_environment_member(&state.db, environment_id, target_user_id).await?;
+    Ok(Json(serde_json::json!({ "removed": true })))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct InviteMemberRequest {
     pub email: String,

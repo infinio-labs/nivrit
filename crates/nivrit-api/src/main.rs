@@ -128,6 +128,15 @@ async fn main() -> anyhow::Result<()> {
             get(handlers::projects::list_environments).post(handlers::projects::create_environment),
         )
         .route(
+            "/projects/{project_id}/environments/{environment_id}/members",
+            get(handlers::projects::list_environment_overrides),
+        )
+        .route(
+            "/projects/{project_id}/environments/{environment_id}/members/{user_id}",
+            axum::routing::put(handlers::projects::set_environment_override)
+                .delete(handlers::projects::remove_environment_override),
+        )
+        .route(
             "/projects/{project_id}/secrets",
             get(handlers::secrets::list_secrets).post(handlers::secrets::create_secret),
         )

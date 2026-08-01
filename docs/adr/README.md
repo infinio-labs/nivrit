@@ -26,6 +26,7 @@ history of what we believed and when is the point.
 | [0006](0006-agpl.md) | AGPL-3.0-only | Accepted |
 | [0007](0007-defer-libcrux-migration.md) | Stay on RustCrypto `ml-kem`/`ml-dsa`; defer the libcrux migration | Accepted |
 | [0008](0008-versioned-project-keys.md) | Versioned project keys, not bulk re-encryption, for rotation | Accepted |
+| [0009](0009-environment-scoped-rbac.md) | Environment-scoped role overrides, not folder-scoped or dual-scoped | Accepted |
 
 ## Writing a new one
 

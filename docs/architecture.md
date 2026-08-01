@@ -180,6 +180,10 @@ which is what lets an account created in the browser log in from the CLI.
   everything created from that point forward; historical secrets stay readable under
   whichever version encrypted them, by design — the same envelope-rotation pattern
   NIST SP 800-57, AWS KMS, and HashiCorp Vault use.
+- Environment-scoped role overrides ([ADR 0009](adr/0009-environment-scoped-rbac.md))
+  are authorization only, not a second key-management concept: an override changes
+  whether the API lets a call through, not what a member can decrypt. Project-key
+  grants (above) are unaffected by any environment override.
 
 ## Future work
 
@@ -195,11 +199,11 @@ which is what lets an account created in the browser log in from the CLI.
   consequences section).
 - Secret versioning and rollback.
 - Audit log streaming.
-- Environment- and folder-scoped RBAC. Role checks are enforced today
-  (`handlers/authz.rs`), but `Role` is assigned per project/org only, so there is no
-  way to grant, e.g., Viewer on staging and Member on prod within one project even
-  though `Environment` and `Folder` already exist as addressable resources — see
-  `RESEARCH.md` §7/§9.
+- ✅ Environment-scoped RBAC (`environment_memberships`, [ADR 0009](adr/0009-environment-scoped-rbac.md)):
+  a project Admin can override a member's role for one environment, superseding the
+  project-level role there; folders inherit their environment's role rather than
+  getting independent scoping. Server-side only — CLI/web/SDK surfaces to manage
+  overrides, and role gating on the secret *read* paths, remain open (`docs/progress.md` §5).
 - ✅ Post-quantum signatures (ML-DSA-65) for audit-log non-repudiation, hash-chained
   so deletion and reordering are detectable, not just per-entry content tampering.
 - ✅ HSM/KMS-backed key-encryption keys (AWS KMS, Azure Key Vault).
