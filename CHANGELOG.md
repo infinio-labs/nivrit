@@ -83,7 +83,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Verified live: a live two-user run against a real API and the real
   `nivrit-crypto-helper` subprocess — invite before rotation, rotate, and
   confirm the invited member decrypts both pre- and post-rotation secrets
-  without a fresh login. Go SDK still pending.
+  without a fresh login.
+- **The Go SDK is now wired to versioned project keys too.** Same shape as
+  Python/Node: `RotateProjectKey()`, `GetProjectKey(projectID, version)` /
+  `GetCurrentProjectKey(projectID)` backed by a `{version: key}` cache,
+  `InviteMember()` encapsulating the current version, and
+  `ListSecrets`/`GetSecret` resolving `project_key_version` per secret.
+  Verified live the same way: a two-user run against a real API and the real
+  `nivrit-crypto-helper` subprocess.
 - **Audit-log entries are now hash-chained, so a deleted or reordered entry is
   detectable, not just a modified one.** A lone per-entry ML-DSA-65 signature
   proves a given row's content wasn't altered since signing, but has nothing to

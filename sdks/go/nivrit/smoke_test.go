@@ -166,6 +166,118 @@ func TestSmoke(t *testing.T) {
 	}
 	t.Logf("decrypted secret: %s", secrets[0]["value"])
 
+	// --- versioned project-key rotation (ADR 0008) ---------------------------
+	emailB := fmt.Sprintf("sdk-go-b-%d@example.com", time.Now().UnixMilli())
+	materialB, err := crypto.GenerateRegistrationMaterial(password, emailB)
+	if err != nil {
+		t.Fatalf("generate registration material for second user: %v", err)
+	}
+	regB, err := apiRequest("POST", "/auth/register", map[string]any{
+		"email":                          emailB,
+		"auth_hash":                      materialB["auth_hash"],
+		"name":                           "Go SDK Test B",
+		"public_key":                     materialB["public_key"],
+		"encrypted_private_key":          materialB["encrypted_private_key"],
+		"private_key_nonce":              materialB["private_key_nonce"],
+		"private_key_algorithm":          materialB["private_key_algorithm"],
+		"recovery_auth_hash":             materialB["recovery_auth_hash"],
+		"encrypted_private_key_recovery": materialB["encrypted_private_key_recovery"],
+		"private_key_recovery_nonce":     materialB["private_key_recovery_nonce"],
+		"private_key_recovery_algorithm": materialB["private_key_recovery_algorithm"],
+	}, "")
+	if err != nil {
+		t.Fatalf("register second user: %v", err)
+	}
+	regBMap := regB.(map[string]any)
+	userB := regBMap["user"].(map[string]any)
+	t.Logf("registered second user %s", userB["email"])
+
+	// Invited before the rotation: starts out holding only version 1.
+	if err := session.InviteMember(project["id"].(string), emailB, "member"); err != nil {
+		t.Fatalf("invite second user: %v", err)
+	}
+	t.Log("invited second user to project")
+
+	patBRaw, err := apiRequest("POST", "/auth/pat", map[string]any{"name": "go-sdk-test-b"}, regBMap["token"].(string))
+	if err != nil {
+		t.Fatalf("create pat for second user: %v", err)
+	}
+	patB := patBRaw.(map[string]any)
+
+	sessionB := NewSession(apiURL, patB["token"].(string), crypto)
+	if err := sessionB.Authenticate(password); err != nil {
+		t.Fatalf("authenticate second user: %v", err)
+	}
+
+	preRotation, err := sessionB.GetSecret(project["id"].(string), env["id"].(string), "GREETING")
+	if err != nil {
+		t.Fatalf("second user get pre-rotation secret: %v", err)
+	}
+	if preRotation["value"] != "hello-go-sdk" {
+		t.Fatalf("second user could not decrypt pre-rotation secret: %v", preRotation)
+	}
+	t.Log("second user decrypted pre-rotation secret")
+
+	rotatedVersion, grantedTo, err := session.RotateProjectKey(project["id"].(string))
+	if err != nil {
+		t.Fatalf("rotate project key: %v", err)
+	}
+	if rotatedVersion != 2 || grantedTo != 2 {
+		t.Fatalf("unexpected rotation result: version=%d grantedTo=%d", rotatedVersion, grantedTo)
+	}
+	t.Logf("rotated project key to version %d (granted to %d members)", rotatedVersion, grantedTo)
+
+	currentVersion, err := session.CurrentProjectKeyVersion(project["id"].(string))
+	if err != nil {
+		t.Fatalf("current project key version: %v", err)
+	}
+	currentKey, err := session.GetCurrentProjectKey(project["id"].(string))
+	if err != nil {
+		t.Fatalf("current project key: %v", err)
+	}
+	encryptedPostRotation, err := crypto.EncryptValue("hello-after-rotation", currentKey)
+	if err != nil {
+		t.Fatalf("encrypt post-rotation value: %v", err)
+	}
+	_, err = session.Client.CreateSecret(project["id"].(string), map[string]any{
+		"environment_id":      env["id"],
+		"key":                 "POST_ROTATION",
+		"encrypted_value":     encryptedPostRotation["ciphertext"],
+		"nonce":               encryptedPostRotation["nonce"],
+		"algorithm":           "aes256gcm-v1",
+		"project_key_version": currentVersion,
+	})
+	if err != nil {
+		t.Fatalf("create post-rotation secret: %v", err)
+	}
+	t.Logf("created post-rotation secret under version %d", currentVersion)
+
+	// Second user was a current member at rotation time, so they automatically
+	// received the new version -- confirm without a fresh login, proving
+	// RotateProjectKey's cache update on the rotating side and the grant on
+	// the receiving side both worked.
+	if _, err := sessionB.LoadProjectKeys(project["id"].(string)); err != nil {
+		t.Fatalf("second user load project keys: %v", err)
+	}
+	postRotationForB, err := sessionB.GetSecret(project["id"].(string), env["id"].(string), "POST_ROTATION")
+	if err != nil {
+		t.Fatalf("second user get post-rotation secret: %v", err)
+	}
+	if postRotationForB["value"] != "hello-after-rotation" {
+		t.Fatalf("second user could not decrypt post-rotation secret: %v", postRotationForB)
+	}
+	preRotationAgainForB, err := sessionB.GetSecret(project["id"].(string), env["id"].(string), "GREETING")
+	if err != nil {
+		t.Fatalf("second user get pre-rotation secret again: %v", err)
+	}
+	if preRotationAgainForB["value"] != "hello-go-sdk" {
+		t.Fatalf("second user lost access to pre-rotation secret after rotation: %v", preRotationAgainForB)
+	}
+	t.Log("second user decrypted both pre- and post-rotation secrets after rotation")
+
+	if _, err := apiRequest("DELETE", fmt.Sprintf("/auth/pats/%s", patB["id"]), nil, regBMap["token"].(string)); err != nil {
+		t.Fatalf("revoke pat for second user: %v", err)
+	}
 	if _, err := apiRequest("DELETE", fmt.Sprintf("/auth/pats/%s", pat["id"]), nil, regMap["token"].(string)); err != nil {
 		t.Fatalf("revoke pat: %v", err)
 	}

@@ -285,3 +285,57 @@ func (c *NivritClient) CreatePAT(body any) (map[string]any, error) {
 	}
 	return r.(map[string]any), nil
 }
+
+// GetPublicKey looks up a user's public key by email, to encapsulate a
+// project key to them (invite, or a rotation grant). Requires Member+ on
+// projectID.
+func (c *NivritClient) GetPublicKey(email, projectID string) (map[string]any, error) {
+	path := fmt.Sprintf("/users/public-key?email=%s&project_id=%s", url.QueryEscape(email), url.QueryEscape(projectID))
+	r, err := c.request("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return r.(map[string]any), nil
+}
+
+// Versioned project keys (ADR 0008)
+
+// ListMembers returns the current members of a project and the public key a
+// rotation grant should be encapsulated to.
+func (c *NivritClient) ListMembers(projectID string) ([]any, error) {
+	r, err := c.request("GET", "/projects/"+url.PathEscape(projectID)+"/members", nil)
+	if err != nil {
+		return nil, err
+	}
+	return r.([]any), nil
+}
+
+func (c *NivritClient) InviteMember(projectID string, body any) (map[string]any, error) {
+	r, err := c.request("POST", "/projects/"+url.PathEscape(projectID)+"/members", body)
+	if err != nil {
+		return nil, err
+	}
+	return r.(map[string]any), nil
+}
+
+// ListKeyVersions returns every project-key version the caller has been
+// granted, oldest first -- what's needed to decrypt the project's full
+// secret history, not just what's current.
+func (c *NivritClient) ListKeyVersions(projectID string) ([]any, error) {
+	r, err := c.request("GET", "/projects/"+url.PathEscape(projectID)+"/key-versions", nil)
+	if err != nil {
+		return nil, err
+	}
+	return r.([]any), nil
+}
+
+// RotateKey mints the next project-key version, granted to exactly the
+// supplied roster. The server independently verifies the roster matches
+// current membership.
+func (c *NivritClient) RotateKey(projectID string, body any) (map[string]any, error) {
+	r, err := c.request("POST", "/projects/"+url.PathEscape(projectID)+"/rotate-key", body)
+	if err != nil {
+		return nil, err
+	}
+	return r.(map[string]any), nil
+}

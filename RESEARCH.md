@@ -333,8 +333,8 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
 > `[Unreleased]` section of `CHANGELOG.md`). Item 5 (RBAC granularity) was resolved
 > as per-environment role overrides (ADR 0009/0010) after a product decision on
 > the resource-scoping shape; server enforcement, CLI, and web UI are all wired.
-> Python/Go SDK support for versioned project keys (a separate, ADR 0008 gap)
-> remains open. See `docs/progress.md` §5 for current status.
+> Python and Go SDK support for versioned project keys (a separate, ADR 0008 gap)
+> is also now wired. See `docs/progress.md` §5 for current status.
 
 1. ~~**Audit-log signing is silently optional.**~~ **Fixed.** `Config::validate()` now
    requires either a real `NIVRIT_SIGNING_KEY_SEED` or an explicit
@@ -364,9 +364,8 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
    subprocess (invite, rotate, confirm the invited-before-rotation member decrypts
    both pre- and post-rotation secrets). Getting the web UI's Playwright run to pass
    surfaced a real, separate bug — see §9.5 below — not something worth burying in
-   this bullet. The Python SDK is also wired now, verified the same way (live,
-   two-user, against a real API and helper subprocess). The Go SDK is not yet
-   updated — see ADR 0008's consequences section. (§5)
+   this bullet. The Python and Go SDKs are also wired now, each verified the same
+   way (live, two-user, against a real API and helper subprocess). (§5)
 5. ~~**RBAC is flat and project-scoped only**, despite `Environment` and `Folder`
    already existing as addressable models — no way to grant environment- or
    folder-level permissions today. A real gap versus Vault, Infisical, and Doppler.~~
