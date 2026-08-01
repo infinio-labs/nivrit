@@ -160,3 +160,33 @@ class NivritClient:
 
     def create_pat(self, body: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/auth/pat", body)
+
+    def get_public_key(self, email: str, project_id: str) -> dict[str, Any]:
+        """Look up a user's public key by email, to encapsulate a project key
+        to them (invite, or a rotation grant). Requires Member+ on
+        `project_id`."""
+        return self._request(
+            "GET", f"/users/public-key?email={email}&project_id={project_id}"
+        )
+
+    # Versioned project keys (ADR 0008)
+
+    def list_members(self, project_id: str) -> list[dict[str, Any]]:
+        """Current members of a project and the public key a rotation grant
+        should be encapsulated to."""
+        return self._request("GET", f"/projects/{project_id}/members")
+
+    def invite_member(self, project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"/projects/{project_id}/members", body)
+
+    def list_key_versions(self, project_id: str) -> list[dict[str, Any]]:
+        """Every project-key version the caller has been granted, oldest
+        first -- what's needed to decrypt the project's full secret history,
+        not just what's current."""
+        return self._request("GET", f"/projects/{project_id}/key-versions")
+
+    def rotate_key(self, project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Mint the next project-key version, granted to exactly the supplied
+        roster. The server independently verifies the roster matches current
+        membership."""
+        return self._request("POST", f"/projects/{project_id}/rotate-key", body)

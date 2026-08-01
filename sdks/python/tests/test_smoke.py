@@ -10,6 +10,7 @@ from nivrit import HelperCrypto, NivritClient, NivritSession
 
 API_URL = os.environ.get("NIVRIT_API_URL", "http://localhost:4000")
 EMAIL = f"sdk-python-{int(time.time() * 1000)}@example.com"
+EMAIL_B = f"sdk-python-b-{int(time.time() * 1000)}@example.com"
 PASSWORD = "Correct-Horse-Battery-Staple!"
 
 
@@ -97,8 +98,72 @@ async def main():
     assert secrets_list[0]["value"] == "hello-python-sdk"
     print("decrypted secret matches expected value")
 
+    # --- versioned project-key rotation (ADR 0008) ---------------------------
+    material_b = crypto.generate_registration_material(PASSWORD, EMAIL_B)
+    reg_b = api_request(
+        "POST",
+        "/auth/register",
+        {
+            "email": EMAIL_B,
+            "auth_hash": material_b["auth_hash"],
+            "name": "Python SDK Test B",
+            "public_key": material_b["public_key"],
+            "encrypted_private_key": material_b["encrypted_private_key"],
+            "private_key_nonce": material_b["private_key_nonce"],
+            "private_key_algorithm": material_b["private_key_algorithm"],
+            "recovery_auth_hash": material_b["recovery_auth_hash"],
+            "encrypted_private_key_recovery": material_b["encrypted_private_key_recovery"],
+            "private_key_recovery_nonce": material_b["private_key_recovery_nonce"],
+            "private_key_recovery_algorithm": material_b["private_key_recovery_algorithm"],
+        },
+    )
+    print("registered second user", reg_b["user"]["email"])
+
+    # Invited before the rotation: starts out holding only version 1.
+    session.invite_member(project["id"], EMAIL_B, "member")
+    print("invited second user to project")
+
+    pat_b = api_request("POST", "/auth/pat", {"name": "python-sdk-test-b"}, reg_b["token"])
+    session_b = await NivritSession.from_pat(API_URL, pat_b["token"], PASSWORD, crypto)
+    pre_rotation = session_b.get_secret(project["id"], env["id"], "GREETING")
+    assert pre_rotation["value"] == "hello-python-sdk"
+    print("second user decrypted pre-rotation secret")
+
+    rotated = session.rotate_project_key(project["id"])
+    assert rotated["version"] == 2
+    assert rotated["granted_to"] == 2
+    print(f"rotated project key to version {rotated['version']} (granted to {rotated['granted_to']} members)")
+
+    current_version = session.current_project_key_version(project["id"])
+    current_key = session.get_project_key(project["id"])
+    encrypted_post_rotation = crypto.encrypt_value("hello-after-rotation", current_key)
+    session.client.create_secret(
+        project["id"],
+        {
+            "environment_id": env["id"],
+            "key": "POST_ROTATION",
+            "encrypted_value": encrypted_post_rotation["ciphertext"],
+            "nonce": encrypted_post_rotation["nonce"],
+            "algorithm": "aes256gcm-v1",
+            "project_key_version": current_version,
+        },
+    )
+    print("created post-rotation secret under version", current_version)
+
+    # Second user was a current member at rotation time, so they automatically
+    # received the new version -- confirm without a fresh login, proving
+    # rotate_project_key's cache update on the rotating side and the grant on
+    # the receiving side both worked.
+    session_b.load_project_keys(project["id"])
+    post_rotation_for_b = session_b.get_secret(project["id"], env["id"], "POST_ROTATION")
+    assert post_rotation_for_b["value"] == "hello-after-rotation"
+    pre_rotation_again_for_b = session_b.get_secret(project["id"], env["id"], "GREETING")
+    assert pre_rotation_again_for_b["value"] == "hello-python-sdk"
+    print("second user decrypted both pre- and post-rotation secrets after rotation")
+
+    api_request("DELETE", f"/auth/pats/{pat_b['id']}", token=reg_b["token"])
     api_request("DELETE", f"/auth/pats/{pat['id']}", token=reg["token"])
-    print("revoked PAT")
+    print("revoked PATs")
     print("Python SDK smoke test passed.")
 
 

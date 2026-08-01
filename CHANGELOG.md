@@ -75,6 +75,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   live two-user `smoke.js` run against a real API and the real
   `nivrit-crypto-helper` subprocess. Python and Go SDKs are not yet updated;
   they keep working for any project that's never been rotated.
+- **The Python SDK is now wired to versioned project keys too.** Mirrors the
+  Node SDK: `session.rotate_project_key()`, `session.get_project_key(project_id,
+  version=None)` backed by a `{version: key}` cache, `session.invite_member()`
+  encapsulating the *current* version rather than a stale one, and
+  `list_secrets`/`get_secret` resolving `project_key_version` per secret.
+  Verified live: a live two-user run against a real API and the real
+  `nivrit-crypto-helper` subprocess — invite before rotation, rotate, and
+  confirm the invited member decrypts both pre- and post-rotation secrets
+  without a fresh login. Go SDK still pending.
 - **Audit-log entries are now hash-chained, so a deleted or reordered entry is
   detectable, not just a modified one.** A lone per-entry ML-DSA-65 signature
   proves a given row's content wasn't altered since signing, but has nothing to

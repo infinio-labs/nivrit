@@ -194,8 +194,11 @@ which is what lets an account created in the browser log in from the CLI.
   [ADR 0008](adr/0008-versioned-project-keys.md) — this would run client-side on top
   of it, the way Vault's `rewrap` or AWS's `ReEncrypt` sit on top of their own
   rotation.
-- Wire the Python and Go SDKs to versioned project keys (server, CLI, the web UI's
-  Members tab, and the Node SDK's `session.rotateProjectKey()` are — see ADR 0008's
+- ✅ Wire the Python SDK to versioned project keys (`session.rotate_project_key()`,
+  `session.get_project_key(project_id, version=None)`, per-secret `project_key_version`
+  resolution) — matches server, CLI, web UI, and the Node SDK. Verified live against a
+  real API with a two-user invite/rotate/cross-decrypt scenario.
+- Wire the Go SDK to versioned project keys the same way (see ADR 0008's
   consequences section).
 - Secret versioning and rollback.
 - Audit log streaming.
