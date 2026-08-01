@@ -1,4 +1,4 @@
-import { Mail, ShieldCheck, UserPlus, Users } from './icons';
+import { KeyRound, Mail, ShieldCheck, UserPlus, Users } from './icons';
 import { Button, Card, CardHeader, EmptyState, Input, Label, Select } from './ui';
 
 interface MembersTabProps {
@@ -8,6 +8,8 @@ interface MembersTabProps {
   inviteRole: 'admin' | 'member' | 'viewer';
   setInviteRole: (v: 'admin' | 'member' | 'viewer') => void;
   onInvite: (e: React.FormEvent) => void;
+  onRotateKey: () => void;
+  rotatingKey: boolean;
 }
 
 const roles = [
@@ -106,6 +108,33 @@ export function MembersTab(props: MembersTabProps) {
               Send invite
             </Button>
           </form>
+        </Card>
+      )}
+
+      {props.selectedProjectId && (
+        <Card>
+          <CardHeader
+            title="Rotate project key"
+            description="Mint a new key version, granted only to current members."
+            action={<KeyRound className="text-slate-400" size={20} />}
+          />
+          <div className="space-y-4 p-5">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              Use this after removing someone&apos;s access, or on a schedule. Existing
+              secrets are untouched and stay readable under whichever version encrypted
+              them — only members present at the moment of rotation receive the new one.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="rotate-key-btn"
+              disabled={props.rotatingKey}
+              onClick={props.onRotateKey}
+            >
+              <KeyRound size={16} />
+              {props.rotatingKey ? 'Rotating…' : 'Rotate key now'}
+            </Button>
+          </div>
         </Card>
       )}
     </div>

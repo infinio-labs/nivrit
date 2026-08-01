@@ -31,6 +31,9 @@ import {
   listImports,
   createImport,
   deleteImport,
+  listProjectMembers,
+  listProjectKeyVersions,
+  rotateProjectKey,
   login,
   loginTotp,
   oauthCallback,
@@ -73,13 +76,23 @@ export interface SecretEntry {
   inheritedFrom?: string;
 }
 
+/**
+ * Every project-key version this account has been granted (ADR 0008), plus
+ * which one is current -- i.e. the one new secret writes should use. A
+ * project that's never been rotated has exactly one entry.
+ */
+export interface ProjectKeyState {
+  currentVersion: number;
+  versions: Map<number, string>; // version -> base64 project key
+}
+
 export interface Session {
   token: string;
   userId: string;
   email: string;
   publicKey: string;
   privateKey: string;
-  projects: Map<string, string>; // project_id -> base64 project key
+  projects: Map<string, ProjectKeyState>;
 }
 
 let session: Session | null = null;
@@ -92,6 +105,30 @@ export function clearSession(): void {
   session = null;
 }
 
+/** The key new writes should use for a project. Throws if the caller isn't a
+ * member (or the session predates login) rather than returning undefined, so
+ * call sites don't have to null-check on every secret operation. */
+function currentProjectKey(s: Session, projectId: string): { version: number; key: string } {
+  const state = s.projects.get(projectId);
+  if (!state) throw new Error('project key not available');
+  const key = state.versions.get(state.currentVersion);
+  if (!key) throw new Error('project key not available');
+  return { version: state.currentVersion, key };
+}
+
+/** A specific project-key version's plaintext -- for decrypting a secret or
+ * secret-version written under an older version than current (ADR 0008). */
+function projectKeyForVersion(s: Session, projectId: string, version: number): string {
+  const state = s.projects.get(projectId);
+  const key = state?.versions.get(version);
+  if (!key) {
+    throw new Error(
+      `no cached key for project ${projectId} version ${version}; sign in again to pick up any versions granted since your last login`
+    );
+  }
+  return key;
+}
+
 async function buildSession(
   response: { token: string; user: { id: string; email: string; public_key: string; encrypted_private_key: string; private_key_nonce: string; private_key_algorithm: string } },
   password: string
@@ -102,18 +139,40 @@ async function buildSession(
     password
   );
 
-  const projects = new Map<string, string>();
+  const projects = new Map<string, ProjectKeyState>();
   const memberships = await getMyProjects(response.token);
   for (const membership of memberships) {
-    if (!membership.encrypted_project_key) continue;
+    // Every version this account has ever been granted, oldest first -- not
+    // just the current one -- so pre-rotation secret history stays
+    // decryptable. A project that's never been rotated returns exactly one
+    // entry, so this is a strict superset of the old single-key recovery.
+    let entries;
     try {
-      const projectKey = await decapsulateProjectKey(
-        JSON.parse(atob(membership.encrypted_project_key)),
-        privateKey
-      );
-      projects.set(membership.project_id, projectKey);
+      entries = await listProjectKeyVersions(response.token, membership.project_id);
     } catch (e) {
-      console.warn(`failed to decrypt project key for ${membership.project_id}:`, e);
+      console.warn(`failed to list key versions for ${membership.project_id}:`, e);
+      continue;
+    }
+    const versions = new Map<number, string>();
+    let currentVersion = 0;
+    for (const entry of entries) {
+      if (!entry.encrypted_project_key) continue;
+      try {
+        const projectKey = await decapsulateProjectKey(
+          JSON.parse(atob(entry.encrypted_project_key)),
+          privateKey
+        );
+        versions.set(entry.version, projectKey);
+        currentVersion = Math.max(currentVersion, entry.version);
+      } catch (e) {
+        console.warn(
+          `failed to decrypt project key for ${membership.project_id} v${entry.version}:`,
+          e
+        );
+      }
+    }
+    if (versions.size > 0) {
+      projects.set(membership.project_id, { currentVersion, versions });
     }
   }
 
@@ -337,7 +396,10 @@ export async function createProjectSession(
     project_key_algorithm: hybridSuiteId(),
   });
 
-  s.projects.set(project.id, projectKey);
+  s.projects.set(project.id, {
+    currentVersion: 1,
+    versions: new Map([[1, projectKey]]),
+  });
   return project;
 }
 
@@ -358,8 +420,7 @@ export async function setEncryptedSecret(
   folderId: string | null = null
 ): Promise<void> {
   const s = getSessionOrThrow();
-  const projectKey = s.projects.get(projectId);
-  if (!projectKey) throw new Error('project key not available');
+  const { version, key: projectKey } = currentProjectKey(s, projectId);
   const encrypted = await encryptValue(value, projectKey);
   // The folder is part of a secret's identity here: writing without it would
   // land in the environment root, where the folder view would not show it.
@@ -370,7 +431,8 @@ export async function setEncryptedSecret(
     key,
     encrypted.ciphertext,
     encrypted.nonce,
-    folderId
+    folderId,
+    version
   );
 }
 
@@ -380,9 +442,11 @@ export async function getEncryptedSecret(
   key: string
 ): Promise<string> {
   const s = getSessionOrThrow();
-  const projectKey = s.projects.get(projectId);
-  if (!projectKey) throw new Error('project key not available');
   const data = await getSecret(s.token, projectId, environmentId, key);
+  // Decrypt with whichever key version this specific ciphertext was written
+  // under (ADR 0008) -- not necessarily this project's current version, if
+  // it predates a rotation.
+  const projectKey = projectKeyForVersion(s, projectId, data.project_key_version ?? 1);
   return decryptValue(data.encrypted_value, data.nonce, projectKey);
 }
 
@@ -393,13 +457,17 @@ async function decryptEntries(
   inheritedFrom?: string
 ): Promise<SecretEntry[]> {
   const s = getSessionOrThrow();
-  const projectKey = s.projects.get(projectId);
-  if (!projectKey) throw new Error('project key not available');
+  // Fail fast if we're not even a member, rather than only discovering that
+  // once the first item tries to resolve a key version.
+  if (!s.projects.has(projectId)) throw new Error('project key not available');
 
   const items = await listSecrets(s.token, projectId, environmentId, folderId);
   const entries: SecretEntry[] = [];
   for (const item of items) {
     try {
+      // Each secret may have been written under a different project-key
+      // version (ADR 0008); decrypt with whichever one it actually used.
+      const projectKey = projectKeyForVersion(s, projectId, item.project_key_version ?? 1);
       const value = await decryptValue(item.encrypted_value, item.nonce, projectKey);
       entries.push({ id: item.id, key: item.key, value, version: item.version, inheritedFrom });
     } catch (e) {
@@ -490,11 +558,51 @@ export async function inviteProjectMember(
   role: 'admin' | 'member' | 'viewer'
 ): Promise<void> {
   const s = getSessionOrThrow();
-  const projectKey = s.projects.get(projectId);
-  if (!projectKey) throw new Error('project key not available');
+  // Grants whichever version is current; the server records that as the
+  // invitee's starting grant, not a hardcoded version 1, so an invite after a
+  // rotation doesn't hand out a superseded key (ADR 0008).
+  const { key: projectKey } = currentProjectKey(s, projectId);
   const recipient = await getPublicKey(s.token, email, projectId);
   const encapsulated = await encapsulateProjectKey(projectKey, recipient.public_key);
   await inviteMember(s.token, projectId, { email, role, encrypted_project_key: encapsulated });
+}
+
+/**
+ * Mint a new project-key version and grant it to exactly the project's
+ * current members (ADR 0008). No existing secret is touched. A removed
+ * member simply never receives this grant, so they're locked out of
+ * everything created from this point forward.
+ */
+export async function rotateProjectKeySession(
+  projectId: string
+): Promise<{ version: number; grantedTo: number }> {
+  const s = getSessionOrThrow();
+  // Proves we hold a valid key for this project before bothering to mint the
+  // next version; the actual replacement key is generated fresh below.
+  currentProjectKey(s, projectId);
+
+  const members = await listProjectMembers(s.token, projectId);
+  const newKey = generateProjectKey();
+  const grants = await Promise.all(
+    members.map(async (member) => {
+      const encapsulated = await encapsulateProjectKey(newKey, member.public_key);
+      return {
+        user_id: member.user_id,
+        encrypted_project_key: btoa(JSON.stringify(encapsulated)),
+        project_key_nonce: btoa(''),
+        project_key_algorithm: encapsulated.suite,
+      };
+    })
+  );
+
+  const result = await rotateProjectKey(s.token, projectId, grants);
+
+  const state = s.projects.get(projectId);
+  const versions = state ? new Map(state.versions) : new Map<number, string>();
+  versions.set(result.version, newKey);
+  s.projects.set(projectId, { currentVersion: result.version, versions });
+
+  return { version: result.version, grantedTo: grants.length };
 }
 
 function getSessionOrThrow(): Session {
@@ -545,16 +653,20 @@ export async function listSecretVersionsSession(
   key: string
 ): Promise<DecryptedSecretVersion[]> {
   const s = getSessionOrThrow();
-  const projectKey = s.projects.get(projectId);
-  if (!projectKey) throw new Error('project key unavailable; sign in again');
+  if (!s.projects.has(projectId)) throw new Error('project key unavailable; sign in again');
 
   const versions = await listSecretVersions(s.token, projectId, environmentId, key);
   return Promise.all(
-    versions.map(async (v: SecretVersion) => ({
-      version: v.version,
-      value: await decryptValue(v.encrypted_value, v.nonce, projectKey),
-      createdAt: v.created_at,
-    }))
+    versions.map(async (v: SecretVersion) => {
+      // Each historical version may have been written under a different
+      // project-key version (ADR 0008); decrypt with whichever one it used.
+      const projectKey = projectKeyForVersion(s, projectId, v.project_key_version ?? 1);
+      return {
+        version: v.version,
+        value: await decryptValue(v.encrypted_value, v.nonce, projectKey),
+        createdAt: v.created_at,
+      };
+    })
   );
 }
 

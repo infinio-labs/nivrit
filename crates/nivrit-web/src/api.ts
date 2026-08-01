@@ -388,7 +388,8 @@ export async function setSecret(
   key: string,
   ciphertext: string,
   nonce: string,
-  folderId?: string | null
+  folderId?: string | null,
+  projectKeyVersion?: number
 ): Promise<void> {
   const res = await fetch(`${API_URL}/projects/${projectId}/secrets`, {
     method: 'POST',
@@ -402,6 +403,9 @@ export async function setSecret(
       key,
       encrypted_value: ciphertext,
       nonce,
+      // Omitted defaults to 1 server-side, so this stays optional for a
+      // project that's never been rotated (see ADR 0008).
+      project_key_version: projectKeyVersion,
     }),
   });
   if (!res.ok) throw await failure(res, 'set secret failed');
@@ -412,7 +416,7 @@ export async function getSecret(
   projectId: string,
   environmentId: string,
   key: string
-): Promise<{ encrypted_value: string; nonce: string }> {
+): Promise<{ encrypted_value: string; nonce: string; project_key_version: number }> {
   const res = await fetch(
     `${API_URL}/projects/${projectId}/secrets/${encodeURIComponent(key)}?environment_id=${environmentId}`,
     { headers: { Authorization: `Bearer ${token}` } }
@@ -431,6 +435,8 @@ export interface SecretListItem {
   nonce: string;
   algorithm: string;
   version: number;
+  /** Which project-key version this ciphertext is encrypted under (ADR 0008). */
+  project_key_version: number;
 }
 
 /**
@@ -515,6 +521,70 @@ export async function inviteMember(
   if (!res.ok) throw new Error('invite failed');
 }
 
+// Versioned project keys (ADR 0008)
+
+export interface ProjectMemberKey {
+  user_id: string;
+  public_key: string;
+}
+
+/** Current members of a project and the public key a rotation grant should be
+ * encapsulated to. */
+export async function listProjectMembers(
+  token: string,
+  projectId: string
+): Promise<ProjectMemberKey[]> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/members`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await failure(res, 'could not list project members');
+  return res.json();
+}
+
+export interface ProjectKeyVersionEntry {
+  version: number;
+  encrypted_project_key: string;
+  project_key_nonce: string;
+  project_key_algorithm: string;
+}
+
+/** Every project-key version the caller has been granted, oldest first --
+ * what's needed to decrypt the project's full secret history, not just what's
+ * current. */
+export async function listProjectKeyVersions(
+  token: string,
+  projectId: string
+): Promise<ProjectKeyVersionEntry[]> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/key-versions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await failure(res, 'could not list project key versions');
+  return res.json();
+}
+
+export interface RotateProjectKeyGrant {
+  user_id: string;
+  encrypted_project_key: string;
+  project_key_nonce: string;
+  project_key_algorithm: string;
+}
+
+/** Mint the next project-key version, granted to exactly the supplied roster.
+ * The server independently verifies the roster matches current membership. */
+export async function rotateProjectKey(
+  token: string,
+  projectId: string,
+  grants: RotateProjectKeyGrant[]
+): Promise<{ version: number }> {
+  const res = await fetch(`${API_URL}/projects/${projectId}/rotate-key`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ grants }),
+  });
+  if (!res.ok) throw await failure(res, 'could not rotate the project key');
+  return res.json();
+}
+
 
 // Personal access tokens
 //
@@ -572,6 +642,7 @@ export interface SecretVersion {
   encrypted_value: string;
   nonce: string;
   algorithm: string;
+  project_key_version: number;
   created_at: string;
 }
 

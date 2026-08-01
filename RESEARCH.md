@@ -352,11 +352,15 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
    the NIST SP 800-57 / AWS KMS / HashiCorp Vault envelope-encryption pattern (rotate
    the wrapping key, leave wrapped data alone), not the eager bulk-re-encrypt design
    this finding originally implied was needed — research done as part of fixing this
-   specifically argued against that approach. Server (`nivrit-db`, `nivrit-api`) and
-   CLI are wired end-to-end and verified live (register two users, rotate mid-session,
-   confirm the pre-existing member automatically receives the new version while
-   decrypting old ciphertext under the old one). Web UI and non-Rust SDKs are not yet
-   updated — see ADR 0008's consequences section. (§5)
+   specifically argued against that approach. Server (`nivrit-db`, `nivrit-api`), CLI,
+   and the web UI are wired end-to-end. Server + CLI verified live (register two
+   users, rotate mid-session, confirm the pre-existing member automatically receives
+   the new version while decrypting old ciphertext under the old one); the web UI is
+   covered by real-crypto (non-mocked WASM) unit tests plus a Playwright scenario,
+   though the latter didn't reach a visible pass in this environment — registration's
+   WASM step didn't complete inside 60s here, before the rotation code even runs, a
+   pre-existing environment issue rather than something this work caused. Non-Rust
+   SDKs (Node/Python/Go) are not yet updated — see ADR 0008's consequences section. (§5)
 5. **RBAC is flat and project-scoped only**, despite `Environment` and `Folder`
    already existing as addressable models — no way to grant environment- or
    folder-level permissions today. A real gap versus Vault, Infisical, and Doppler.

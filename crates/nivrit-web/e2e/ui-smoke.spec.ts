@@ -130,6 +130,31 @@ test('register, store a secret, and read it back through the UI', async ({ page 
   // This account is the project admin, so entries are visible rather than 403.
   await expect(page.getByText('write').first()).toBeVisible({ timeout: 15_000 });
 
+  // --- project-key rotation (ADR 0008) ---------------------------------------
+  // Mint a new key version, then confirm secrets from *before* the rotation
+  // still decrypt -- proving the browser correctly picked up the version the
+  // server tagged each ciphertext with, not just the one it just minted.
+  await page.getByRole('button', { name: 'Members' }).click();
+  await expect(page.getByRole('heading', { name: 'Members', exact: true })).toBeVisible();
+  await page.getByTestId('rotate-key-btn').click();
+  await expect(page.getByText(/rotated project key to version 2/i)).toBeVisible({
+    timeout: 15_000,
+  });
+
+  await page.getByRole('button', { name: 'Secrets' }).click();
+  await page.getByTestId('env-select').selectOption({ label: 'Prod' });
+  await expect(page.getByText('API_KEY')).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: 'Show' }).first().click();
+  await expect(page.getByText('sk-live-ui-smoke')).toBeVisible();
+
+  // A secret written *after* rotation must also round-trip, under the new version.
+  await page.getByTestId('secret-key-input').fill('POST_ROTATION_KEY');
+  await page.getByTestId('secret-value-input').fill('sk-after-rotation');
+  await page.getByTestId('set-secret-btn').click();
+  await expect(page.getByText('POST_ROTATION_KEY')).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: 'Show' }).nth(1).click();
+  await expect(page.getByText('sk-after-rotation')).toBeVisible();
+
   await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
 

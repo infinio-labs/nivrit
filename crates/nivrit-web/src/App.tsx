@@ -28,6 +28,7 @@ import {
   processOAuthCallback,
   registerSession,
   resetPasswordSession,
+  rotateProjectKeySession,
   setEncryptedSecret,
   setupTotpSession,
   verifyTotpSession,
@@ -163,6 +164,7 @@ function App() {
   const [editingSecretKey, setEditingSecretKey] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'admin' | 'member' | 'viewer'>('member');
+  const [rotatingKey, setRotatingKey] = useState(false);
 
   // Create form state
   const [newOrgName, setNewOrgName] = useState('');
@@ -688,6 +690,21 @@ function App() {
     }
   }
 
+  async function handleRotateProjectKey() {
+    setRotatingKey(true);
+    try {
+      const result = await rotateProjectKeySession(selectedProjectId);
+      showToast(
+        `rotated project key to version ${result.version} (granted to ${result.grantedTo} current members)`,
+        'success'
+      );
+    } catch {
+      showToast('key rotation failed', 'error');
+    } finally {
+      setRotatingKey(false);
+    }
+  }
+
   async function handleCreateOrg(e: React.FormEvent) {
     e.preventDefault();
     try {
@@ -892,6 +909,8 @@ function App() {
               inviteRole={inviteRole}
               setInviteRole={setInviteRole}
               onInvite={handleInvite}
+              onRotateKey={handleRotateProjectKey}
+              rotatingKey={rotatingKey}
             />
           )}
           {activeTab === 'audit' && (

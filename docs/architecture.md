@@ -190,8 +190,8 @@ which is what lets an account created in the browser log in from the CLI.
   [ADR 0008](adr/0008-versioned-project-keys.md) — this would run client-side on top
   of it, the way Vault's `rewrap` or AWS's `ReEncrypt` sit on top of their own
   rotation.
-- Wire the web UI and non-Rust SDKs to versioned project keys (server + CLI only so
-  far — see ADR 0008's consequences section).
+- Wire the Node/Python/Go SDKs to versioned project keys (server, CLI, and the web
+  UI's Members tab are — see ADR 0008's consequences section).
 - Secret versioning and rollback.
 - Audit log streaming.
 - Environment- and folder-scoped RBAC. Role checks are enforced today
