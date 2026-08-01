@@ -24,6 +24,7 @@ history of what we believed and when is the point.
 | [0004](0004-crypto-helper-subprocess.md) | SDKs call one Rust helper binary, not per-language bindings | Accepted |
 | [0005](0005-hybrid-pq-crypto.md) | Hybrid X25519 + ML-KEM-768, not pure post-quantum | Accepted |
 | [0006](0006-agpl.md) | AGPL-3.0-only | Accepted |
+| [0007](0007-defer-libcrux-migration.md) | Stay on RustCrypto `ml-kem`/`ml-dsa`; defer the libcrux migration | Accepted |
 
 ## Writing a new one
 

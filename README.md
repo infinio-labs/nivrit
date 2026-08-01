@@ -34,7 +34,9 @@ and set/get client-side encrypted secrets end-to-end.
   leg still holds the line. Audit logs are signed with **ML-DSA-65**, so the trail
   itself is quantum-resistant too. One honest caveat: the underlying `ml-kem`/`ml-dsa`
   crates are correct-to-spec but pre-1.0 and not yet independently audited — true of
-  PQC-in-Rust broadly right now, worth knowing before you bet the farm on it.
+  PQC-in-Rust broadly right now, and we looked hard at the alternatives before writing
+  that ([ADR 0007](docs/adr/0007-defer-libcrux-migration.md)), worth knowing before you
+  bet the farm on it.
 - **AGPL-3.0, self-hosted.** `docker compose up` and you're running the whole stack —
   no hosted-only features, no closed fork drifting away from what you can read.
 
@@ -109,6 +111,14 @@ See [`docs/architecture.md`](docs/architecture.md) for the E2EE design and threa
 and [`docs/adr/`](docs/adr/) for the reasoning behind the load-bearing design decisions.
 Planned work and the release plan are tracked in
 [GitHub milestones](https://github.com/infinio-labs/nivrit/milestones).
+
+## Research
+
+[`RESEARCH.md`](RESEARCH.md) is an independent, citation-backed review of nivrit's
+major design decisions — authentication, post-quantum crypto, symmetric encryption,
+architecture, access control, and licensing — checked against NIST/IETF/OWASP
+standards and academic literature, including corrections to some of our own prior
+documentation and a few gaps this process surfaced.
 
 ## Contributing
 

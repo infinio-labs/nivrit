@@ -134,7 +134,7 @@ As of mid-2026, the Rust PQC landscape is maturing but **no single crate is univ
 | **RustCrypto `ml-kem`** | ML-KEM (FIPS 203) | Pure Rust, `no_std`, NIST test vectors, widely used | **Primary candidate** for Nivrit |
 | **RustCrypto `ml-dsa`** | ML-DSA (FIPS 204) | Pure Rust, NIST test vectors | Candidate for future signatures |
 | **RustCrypto `slh-dsa`** | SLH-DSA (FIPS 205) | Pure Rust, conservative | Optional audit-trail signing |
-| **`libcrux-ml-kem`** | ML-KEM | Formally verified (F*/hax), high assurance | Swap in when verification matters most |
+| **`libcrux-ml-kem`** | ML-KEM | Formally verified (F*/hax) — audited Feb–Mar 2026, real bugs found in the verified ML-KEM/ML-DSA proof code itself (see below) | Not currently a safer choice; revisit after re-audit |
 | **`kyberlib`** | ML-KEM | Pure Rust, ACVP conformant, KyberSlash-clean | Alternative if RustCrypto is not preferred |
 | **`pqcrypto`** | Kyber / Dilithium / SPHINCS+ | PQClean-based crates are unmaintained | Do not use |
 | **`liboqs-rust`** | ML-KEM, ML-DSA | Bindings to Open Quantum Safe C lib | Experimental; liboqs itself warns against production reliance |
@@ -143,9 +143,23 @@ As of mid-2026, the Rust PQC landscape is maturing but **no single crate is univ
 
 **Caution:** Several crates carry README warnings that they have not been independently audited. Nivrit should:
 
-1. Start with **RustCrypto `ml-kem`** for feature development and benchmarks.
-2. Pin exact versions and track NIST test-vector results in CI.
-3. Plan a future migration path to `libcrux-ml-kem` or `aws-lc-rs` once audits/FIPS validation are available.
+1. Stay on **RustCrypto `ml-kem`/`ml-dsa`** — no crate swap for now.
+2. Pin exact versions and track NIST test-vector results in CI; keep the
+   `cargo audit` CI job as the live safety net for newly disclosed advisories
+   (it already caught and this project already carries the fix for
+   RUSTSEC-2025-0144, a timing side-channel in `ml-dsa`'s decomposition step).
+3. **Update, 2026-08-01:** the migration path to `libcrux-ml-kem`/`libcrux-ml-dsa`
+   flagged below as a future option has been evaluated and rejected — Symbolic
+   Software's independent audit (Feb–Mar 2026, IACR ePrint 2026/192) found real
+   vulnerabilities inside libcrux's formally-verified ML-KEM/ML-DSA proof code,
+   plus an earlier undisclosed bug that broke Signal's production PQ ratchet.
+   Formal verification did not mean audited-and-clean; it got audited and
+   wasn't. See [ADR 0007](adr/0007-defer-libcrux-migration.md) for the full
+   record, including why a swap wouldn't be a simple drop-in even if a crate
+   did clear the audit bar (hard-coded wire-format byte sizes, no
+   cross-implementation determinism tests for seed-derived keys). AWS-LC-FIPS,
+   liboqs, and BoringSSL were also considered and rejected — none currently
+   offer a meaningfully stronger maturity claim than what's in use today.
 
 ---
 
