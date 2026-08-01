@@ -323,6 +323,49 @@ enum Commands {
         #[arg(short, long)]
         project_id: String,
     },
+    /// Manage per-environment role overrides (ADR 0009/0010): grant a
+    /// project member a different role -- including `none`, no access at
+    /// all -- for one specific environment, without changing their role
+    /// anywhere else in the project.
+    EnvRole {
+        #[command(subcommand)]
+        subcommand: EnvRoleCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum EnvRoleCommands {
+    /// Grant (or replace) a member's role override for one environment.
+    /// Requires the caller to be a project Admin and the target to already
+    /// be a project member.
+    Set {
+        #[arg(short, long)]
+        project_id: String,
+        #[arg(short, long)]
+        environment_id: String,
+        #[arg(long)]
+        email: String,
+        /// admin, member, viewer, or none (no access to this environment)
+        #[arg(short, long)]
+        role: String,
+    },
+    /// List every role override on one environment.
+    List {
+        #[arg(short, long)]
+        project_id: String,
+        #[arg(short, long)]
+        environment_id: String,
+    },
+    /// Remove a member's override, reverting them to their project-level
+    /// role for that environment.
+    Remove {
+        #[arg(short, long)]
+        project_id: String,
+        #[arg(short, long)]
+        environment_id: String,
+        #[arg(long)]
+        email: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -680,6 +723,44 @@ async fn main() -> anyhow::Result<()> {
         Commands::RotateProjectKey { project_id } => {
             rotate_project_key(&client, &mut config, format, &project_id).await?
         }
+        Commands::EnvRole { subcommand } => match subcommand {
+            EnvRoleCommands::Set {
+                project_id,
+                environment_id,
+                email,
+                role,
+            } => {
+                set_env_role(
+                    &client,
+                    &config,
+                    format,
+                    &project_id,
+                    &environment_id,
+                    &email,
+                    &role,
+                )
+                .await?
+            }
+            EnvRoleCommands::List {
+                project_id,
+                environment_id,
+            } => list_env_roles(&client, &config, format, &project_id, &environment_id).await?,
+            EnvRoleCommands::Remove {
+                project_id,
+                environment_id,
+                email,
+            } => {
+                remove_env_role(
+                    &client,
+                    &config,
+                    format,
+                    &project_id,
+                    &environment_id,
+                    &email,
+                )
+                .await?
+            }
+        },
     }
 
     save_config(&config)?;
@@ -3017,6 +3098,175 @@ async fn invite_member(
             user_id: user_id.to_string(),
             project_id: project_id_resp.to_string(),
             role: role_resp.to_string(),
+        },
+    );
+    Ok(())
+}
+
+/// Resolve an email to a user id via the same lookup `invite_member` uses.
+/// Requires the caller to already be a project member.
+async fn resolve_user_id_by_email(
+    client: &reqwest::Client,
+    token: &str,
+    server_url: &str,
+    project_id: &str,
+    email: &str,
+) -> anyhow::Result<String> {
+    let res: serde_json::Value = client
+        .get(format!(
+            "{}/users/public-key?email={}&project_id={}",
+            server_url,
+            urlencoding::encode(email),
+            project_id
+        ))
+        .bearer_auth(token)
+        .send()
+        .await?
+        .json()
+        .await?;
+    res["id"]
+        .as_str()
+        .map(String::from)
+        .ok_or_else(|| anyhow::anyhow!("could not resolve {email}: {res}"))
+}
+
+async fn set_env_role(
+    client: &reqwest::Client,
+    config: &CliConfig,
+    format: OutputFormat,
+    project_id: &str,
+    environment_id: &str,
+    email: &str,
+    role: &str,
+) -> anyhow::Result<()> {
+    let token = config
+        .token
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
+
+    let user_id =
+        resolve_user_id_by_email(client, token, &config.server_url, project_id, email).await?;
+
+    let res: serde_json::Value = client
+        .put(format!(
+            "{}/projects/{}/environments/{}/members/{}",
+            config.server_url, project_id, environment_id, user_id
+        ))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "role": role }))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let applied_role = res["role"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("set env role failed: {res}"))?;
+
+    #[derive(Serialize)]
+    struct SetEnvRoleOut {
+        user_id: String,
+        environment_id: String,
+        role: String,
+    }
+    print_output(
+        format,
+        &format!("{email} is now '{applied_role}' on environment {environment_id}"),
+        &SetEnvRoleOut {
+            user_id,
+            environment_id: environment_id.to_string(),
+            role: applied_role.to_string(),
+        },
+    );
+    Ok(())
+}
+
+async fn list_env_roles(
+    client: &reqwest::Client,
+    config: &CliConfig,
+    format: OutputFormat,
+    project_id: &str,
+    environment_id: &str,
+) -> anyhow::Result<()> {
+    let token = config
+        .token
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
+
+    let res: serde_json::Value = client
+        .get(format!(
+            "{}/projects/{}/environments/{}/members",
+            config.server_url, project_id, environment_id
+        ))
+        .bearer_auth(token)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let overrides = res
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("list env roles failed: {res}"))?;
+
+    #[derive(Serialize)]
+    struct EnvRoleEntry {
+        user_id: String,
+        role: String,
+    }
+    let mut entries = Vec::new();
+    let mut lines = Vec::new();
+    for o in overrides {
+        let user_id = o["user_id"].as_str().unwrap_or("?");
+        let role = o["role"].as_str().unwrap_or("?");
+        lines.push(format!("{user_id} {role}"));
+        entries.push(EnvRoleEntry {
+            user_id: user_id.to_string(),
+            role: role.to_string(),
+        });
+    }
+    print_output(format, &lines.join("\n"), &entries);
+    Ok(())
+}
+
+async fn remove_env_role(
+    client: &reqwest::Client,
+    config: &CliConfig,
+    format: OutputFormat,
+    project_id: &str,
+    environment_id: &str,
+    email: &str,
+) -> anyhow::Result<()> {
+    let token = config
+        .token
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("not logged in"))?;
+
+    let user_id =
+        resolve_user_id_by_email(client, token, &config.server_url, project_id, email).await?;
+
+    let response = client
+        .delete(format!(
+            "{}/projects/{}/environments/{}/members/{}",
+            config.server_url, project_id, environment_id, user_id
+        ))
+        .bearer_auth(token)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("remove env role failed: {body}");
+    }
+
+    #[derive(Serialize)]
+    struct RemoveEnvRoleOut {
+        user_id: String,
+        environment_id: String,
+    }
+    print_output(
+        format,
+        &format!("removed {email}'s override on environment {environment_id}"),
+        &RemoveEnvRoleOut {
+            user_id,
+            environment_id: environment_id.to_string(),
         },
     );
     Ok(())

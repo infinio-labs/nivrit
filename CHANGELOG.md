@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   override blocks list/get/versions on that one environment, leaves every
   other environment readable, an unfiltered listing silently drops just the
   denied environment's secrets, and removing the override restores access.
+- **`niv env-role set/list/remove` manages environment RBAC overrides from
+  the CLI.** `set`/`remove` resolve the target by email (same lookup
+  `invite` uses) and call the ADR 0009 endpoints; `set --role none` is how
+  you deny a member access to one environment outright. Verified live
+  against a real two-user session: set a Member override, list it, set it to
+  `none` and confirm the second user's `list-secrets` on that environment
+  now fails, remove the override, confirm project-level access returns.
 - **Project keys can now be rotated.** Previously `POST /users/me/rotate-key`
   only re-wrapped a project's *existing* symmetric key to a user's new
   personal keypair — there was no way to actually replace it, so a removed

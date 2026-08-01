@@ -191,7 +191,7 @@ All commands currently pass.
    been rotated. After a rotation, those clients can still read anything from
    that point forward but not pre-rotation history. See ADR 0008's consequences
    section.
-5. **Environment RBAC overrides have no CLI/web/SDK management UI.** The server enforces overrides, including the `none` (no access) tier (see the feature table above, [ADR 0009](adr/0009-environment-scoped-rbac.md), [ADR 0010](adr/0010-none-role-for-read-gating.md)); granting, listing, and removing them is only reachable by calling the API directly. A project Admin can't yet do this from `niv` or the web dashboard.
+5. **Environment RBAC overrides have no web UI management surface.** The server enforces overrides, including the `none` (no access) tier (see the feature table above, [ADR 0009](adr/0009-environment-scoped-rbac.md), [ADR 0010](adr/0010-none-role-for-read-gating.md)). CLI is wired (`niv env-role set/list/remove`); the web dashboard is not.
 
 ---
 
