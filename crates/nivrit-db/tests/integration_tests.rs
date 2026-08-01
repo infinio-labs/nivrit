@@ -861,3 +861,37 @@ async fn get_environment_by_id_rejects_project_mismatch() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn environment_member_none_role_roundtrips_and_is_listed_as_denied() {
+    let pool = setup_pool().await;
+    let org_id = create_test_org(&pool).await;
+    let user_id = create_test_user(&pool).await;
+    queries::add_org_member(&pool, org_id, user_id, Role::Admin)
+        .await
+        .unwrap();
+    let project_id = create_test_project(&pool, org_id).await;
+    add_test_project_member_with_key(&pool, project_id, user_id).await;
+    let env_denied = create_test_environment(&pool, project_id).await;
+    let env_open = create_test_environment(&pool, project_id).await;
+
+    let set = queries::set_environment_member(&pool, env_denied, user_id, Role::None)
+        .await
+        .unwrap();
+    assert_eq!(set.role, "none");
+
+    let got = queries::get_environment_member(&pool, env_denied, user_id)
+        .await
+        .unwrap()
+        .expect("override should exist");
+    assert_eq!(got.role, "none");
+
+    let denied = queries::list_none_override_environment_ids(&pool, project_id, user_id)
+        .await
+        .unwrap();
+    assert_eq!(denied, vec![env_denied]);
+    assert!(
+        !denied.contains(&env_open),
+        "an environment with no override must not show up as denied"
+    );
+}

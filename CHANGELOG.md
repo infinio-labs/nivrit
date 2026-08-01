@@ -28,6 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed; a non-Admin cannot grant overrides; overrides are rejected for a
   target who isn't already a project member. Server only in this pass — CLI,
   web UI, and SDKs don't yet expose a way to manage overrides.
+- **Environment overrides now gate reads too, via a new `none` role tier.**
+  The write-path override above didn't touch `list_secrets`/`get_secret`/
+  `list_secret_versions`, which only ever required project membership.
+  Wiring those through the same check turned out to be a no-op, since every
+  project member already outranks `Viewer` — there was no rank below it an
+  override could substitute in to actually *deny* access. Added `Role::None`
+  (rank 0), valid only as an environment override, never as a project or org
+  role ([ADR 0010](docs/adr/0010-none-role-for-read-gating.md)). All three
+  read handlers now call `require_environment_role`; an unfiltered,
+  whole-project secret listing (no single environment to gate on) instead
+  filters out any secret belonging to an environment the caller has been
+  denied, rather than failing the whole call. Verified live: a `none`
+  override blocks list/get/versions on that one environment, leaves every
+  other environment readable, an unfiltered listing silently drops just the
+  denied environment's secrets, and removing the override restores access.
 - **Project keys can now be rotated.** Previously `POST /users/me/rotate-key`
   only re-wrapped a project's *existing* symmetric key to a user's new
   personal keypair — there was no way to actually replace it, so a removed

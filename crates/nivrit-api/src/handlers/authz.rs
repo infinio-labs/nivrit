@@ -89,12 +89,14 @@ fn role_from_str(s: &str) -> Result<Role> {
         "admin" => Ok(Role::Admin),
         "member" => Ok(Role::Member),
         "viewer" => Ok(Role::Viewer),
+        "none" => Ok(Role::None),
         _ => Err(NivritError::Internal(format!("invalid role in db: {s}"))),
     }
 }
 
 fn role_rank(role: Role) -> u8 {
     match role {
+        Role::None => 0,
         Role::Viewer => 1,
         Role::Member => 2,
         Role::Admin => 3,
@@ -141,6 +143,18 @@ mod tests {
         assert!(require_role(&m, Role::Admin).is_err());
         assert!(require_role(&m, Role::Member).is_err());
         assert_eq!(require_role(&m, Role::Viewer).unwrap(), Role::Viewer);
+    }
+
+    /// `none` is rank 0 -- it must fail even the lowest real gate (`Viewer`),
+    /// which is the entire point of it existing: without a tier below
+    /// `Viewer`, an environment override could never actually deny access,
+    /// only ever grant more of it.
+    #[test]
+    fn none_role_fails_every_gate_including_viewer() {
+        let m = membership_with_role("none");
+        assert!(require_role(&m, Role::Viewer).is_err());
+        assert!(require_role(&m, Role::Member).is_err());
+        assert!(require_role(&m, Role::Admin).is_err());
     }
 
     #[test]

@@ -74,6 +74,12 @@ pub enum Role {
     Admin,
     Member,
     Viewer,
+    /// Below `Viewer` -- rank 0. Only meaningful as an environment-level
+    /// override (ADR 0009): it lets an environment revoke a project
+    /// member's access entirely for that one environment. Never valid as a
+    /// project- or org-level role, since "a project member with no access"
+    /// isn't a membership at all.
+    None,
 }
 
 #[cfg(test)]
@@ -85,6 +91,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&Role::Admin).unwrap(), "\"admin\"");
         assert_eq!(serde_json::to_string(&Role::Member).unwrap(), "\"member\"");
         assert_eq!(serde_json::to_string(&Role::Viewer).unwrap(), "\"viewer\"");
+        assert_eq!(serde_json::to_string(&Role::None).unwrap(), "\"none\"");
     }
 
     #[test]
@@ -100,6 +107,10 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Role>("\"viewer\"").unwrap(),
             Role::Viewer
+        );
+        assert_eq!(
+            serde_json::from_str::<Role>("\"none\"").unwrap(),
+            Role::None
         );
     }
 

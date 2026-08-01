@@ -282,10 +282,23 @@ pub async fn list_secrets(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     axum::extract::Query(query): axum::extract::Query<ListSecretsQuery>,
 ) -> ApiResult<Json<Vec<SecretResponse>>> {
-    require_project_member(&state.db, project_id, user.id).await?;
+    // A specific environment can be gated directly. An unfiltered,
+    // whole-project listing has no single environment_id to gate on, so
+    // membership is the entry bar and any environment the caller has been
+    // explicitly denied ('none' override) is filtered out of the result
+    // below instead.
+    match query.environment_id {
+        Some(environment_id) => {
+            require_environment_role(&state.db, project_id, environment_id, user.id, Role::Viewer)
+                .await?;
+        }
+        None => {
+            require_project_member(&state.db, project_id, user.id).await?;
+        }
+    }
 
     let (limit, offset) = page(query.limit, query.offset);
-    let rows = queries::list_secrets(
+    let mut rows = queries::list_secrets(
         &state.db,
         project_id,
         query.environment_id,
@@ -294,6 +307,14 @@ pub async fn list_secrets(
         offset,
     )
     .await?;
+
+    if query.environment_id.is_none() {
+        let denied =
+            queries::list_none_override_environment_ids(&state.db, project_id, user.id).await?;
+        if !denied.is_empty() {
+            rows.retain(|row| !denied.contains(&row.environment_id));
+        }
+    }
 
     let user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok());
     let created_at = Utc::now().trunc_subsecs(6);
@@ -394,7 +415,14 @@ pub async fn list_secret_versions(
     axum::extract::Path((project_id, key)): axum::extract::Path<(Uuid, String)>,
     axum::extract::Query(query): axum::extract::Query<GetSecretQuery>,
 ) -> ApiResult<Json<Vec<SecretVersionResponse>>> {
-    require_project_member(&state.db, project_id, user.id).await?;
+    require_environment_role(
+        &state.db,
+        project_id,
+        query.environment_id,
+        user.id,
+        Role::Viewer,
+    )
+    .await?;
 
     let secret = queries::get_secret(
         &state.db,
@@ -497,7 +525,14 @@ pub async fn get_secret(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     axum::extract::Query(query): axum::extract::Query<GetSecretQuery>,
 ) -> ApiResult<Json<SecretResponse>> {
-    require_project_member(&state.db, project_id, user.id).await?;
+    require_environment_role(
+        &state.db,
+        project_id,
+        query.environment_id,
+        user.id,
+        Role::Viewer,
+    )
+    .await?;
 
     let row = queries::get_secret(
         &state.db,

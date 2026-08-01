@@ -271,6 +271,12 @@ pub async fn invite_member(
     if req.email.is_empty() {
         return Err(NivritError::Validation("email required".into()).into());
     }
+    if req.role == Role::None {
+        return Err(NivritError::Validation(
+            "role 'none' is only valid as an environment-level override, not a project role".into(),
+        )
+        .into());
+    }
 
     // Only project admins may invite members.
     let membership = require_project_member(&state.db, project_id, user.id).await?;
@@ -467,6 +473,7 @@ fn role_from_str(s: &str) -> Result<Role, NivritError> {
         "admin" => Ok(Role::Admin),
         "member" => Ok(Role::Member),
         "viewer" => Ok(Role::Viewer),
+        "none" => Ok(Role::None),
         _ => Err(NivritError::Validation(format!("invalid role: {s}"))),
     }
 }
@@ -476,6 +483,7 @@ fn role_as_str(role: Role) -> &'static str {
         Role::Admin => "admin",
         Role::Member => "member",
         Role::Viewer => "viewer",
+        Role::None => "none",
     }
 }
 

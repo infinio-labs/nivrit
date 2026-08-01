@@ -199,11 +199,13 @@ which is what lets an account created in the browser log in from the CLI.
   consequences section).
 - Secret versioning and rollback.
 - Audit log streaming.
-- ✅ Environment-scoped RBAC (`environment_memberships`, [ADR 0009](adr/0009-environment-scoped-rbac.md)):
-  a project Admin can override a member's role for one environment, superseding the
-  project-level role there; folders inherit their environment's role rather than
-  getting independent scoping. Server-side only — CLI/web/SDK surfaces to manage
-  overrides, and role gating on the secret *read* paths, remain open (`docs/progress.md` §5).
+- ✅ Environment-scoped RBAC (`environment_memberships`, [ADR 0009](adr/0009-environment-scoped-rbac.md),
+  [ADR 0010](adr/0010-none-role-for-read-gating.md)): a project Admin can override a
+  member's role for one environment, superseding the project-level role there, on
+  both the write and read paths; a 4th `none` tier lets an override deny an
+  environment outright, not just substitute a different role. Folders inherit their
+  environment's role rather than getting independent scoping. Server-side only — CLI/web
+  surfaces to manage overrides remain open (`docs/progress.md` §5).
 - ✅ Post-quantum signatures (ML-DSA-65) for audit-log non-repudiation, hash-chained
   so deletion and reordering are detectable, not just per-entry content tampering.
 - ✅ HSM/KMS-backed key-encryption keys (AWS KMS, Azure Key Vault).

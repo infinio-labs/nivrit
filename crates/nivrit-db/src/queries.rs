@@ -676,6 +676,31 @@ pub async fn get_environment_member(
     .map_err(map_db_error)
 }
 
+/// Every environment in this project where the user's override role is
+/// `none` -- i.e. explicitly denied, not just falling back to the project
+/// role. Used to filter an unfiltered (all-environments) secret listing,
+/// where there's no single `environment_id` to hand `require_environment_role`.
+pub async fn list_none_override_environment_ids(
+    pool: &DbPool,
+    project_id: Uuid,
+    user_id: Uuid,
+) -> Result<Vec<Uuid>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT em.environment_id
+        FROM environment_memberships em
+        JOIN environments e ON e.id = em.environment_id
+        WHERE e.project_id = $1 AND em.user_id = $2 AND em.role = 'none'
+        "#,
+        project_id,
+        user_id
+    )
+    .fetch_all(pool.inner())
+    .await
+    .map_err(map_db_error)?;
+    Ok(rows.into_iter().map(|r| r.environment_id).collect())
+}
+
 pub async fn list_environment_members(
     pool: &DbPool,
     environment_id: Uuid,
@@ -2088,5 +2113,6 @@ fn role_as_str(role: Role) -> &'static str {
         Role::Admin => "admin",
         Role::Member => "member",
         Role::Viewer => "viewer",
+        Role::None => "none",
     }
 }
