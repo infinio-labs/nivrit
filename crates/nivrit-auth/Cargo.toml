@@ -29,7 +29,7 @@ axum = { workspace = true }
 totp-rs = { version = "=5.7.2", features = ["otpauth", "gen_secret"] }
 
 # Email
-lettre = { version = "=0.11.22", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
+lettre = { version = "=0.11.23", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "pool"] }
 
 # TOTP secret encryption
 aes-gcm = { workspace = true }
