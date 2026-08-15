@@ -76,10 +76,13 @@ async fn main() -> anyhow::Result<()> {
             let allowed: axum::http::HeaderValue =
                 origin.parse().expect("invalid NIVRIT_CORS_ORIGIN");
             // Pin to the methods/headers the API actually uses rather than `Any`.
+            // allow_credentials is required for the httpOnly refresh-token
+            // cookie: a credentialed fetch can't use a wildcard origin.
             CorsLayer::new()
                 .allow_origin(allowed)
                 .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
                 .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+                .allow_credentials(true)
         }
         None => {
             tracing::warn!(
@@ -105,6 +108,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/register", post(handlers::auth::register))
         .route("/auth/login", post(handlers::auth::login))
         .route("/auth/login/totp", post(handlers::auth::login_totp))
+        .route("/auth/refresh", post(handlers::auth::refresh))
+        .route("/auth/logout", post(handlers::auth::logout))
         .route(
             "/auth/oauth/authorize",
             post(handlers::auth::oauth_authorize),

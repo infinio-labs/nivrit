@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, vi, test } from 'vitest';
 import {
   SessionExpiredError,
+  getMe,
   getSecret,
   listEnvironmentOverrides,
   listProjectKeyVersions,
   listProjectMembers,
   login,
+  logout,
+  refreshSession,
   removeEnvironmentOverride,
   rotateProjectKey,
   setEnvironmentOverride,
@@ -380,5 +383,67 @@ describe('environment role overrides', () => {
     const [url, init] = (globalThis.fetch as any).mock.calls[0];
     expect(url).toContain('/projects/project/environments/env1/members/u1');
     expect(init.method).toBe('DELETE');
+  });
+});
+
+describe('refresh sessions', () => {
+  test('refreshSession exchanges the cookie for a fresh token', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ token: 'fresh', expires_in: 3600 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    ) as unknown as typeof globalThis.fetch;
+
+    const result = await refreshSession();
+    expect(result.token).toBe('fresh');
+    const [url, init] = (globalThis.fetch as any).mock.calls[0];
+    expect(url).toContain('/auth/refresh');
+    expect(init.method).toBe('POST');
+    // The refresh cookie must travel with the request.
+    expect(init.credentials).toBe('include');
+  });
+
+  test('refreshSession maps 401 to SessionExpiredError', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response('unauthorized', { status: 401 }))
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(refreshSession()).rejects.toBeInstanceOf(SessionExpiredError);
+  });
+
+  test('getMe sends the bearer token and returns the key blob', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: 'u1',
+            email: 'a@b.com',
+            public_key: 'pk',
+            encrypted_private_key: 'ek',
+            private_key_nonce: 'n',
+            private_key_algorithm: 'aes256gcm-v1',
+          }),
+          { status: 200 }
+        )
+      )
+    ) as unknown as typeof globalThis.fetch;
+
+    const me = await getMe('tok');
+    expect(me.email).toBe('a@b.com');
+    expect(me.encrypted_private_key).toBe('ek');
+    const [url, init] = (globalThis.fetch as any).mock.calls[0];
+    expect(url).toContain('/users/me');
+    expect(init.headers.Authorization).toBe('Bearer tok');
+  });
+
+  test('logout swallows network failures so local sign-out always proceeds', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.reject(new Error('network down'))
+    ) as unknown as typeof globalThis.fetch;
+
+    await expect(logout()).resolves.toBeUndefined();
   });
 });

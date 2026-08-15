@@ -2157,6 +2157,84 @@ pub async fn touch_personal_access_token(pool: &DbPool, token_id: Uuid) -> Resul
     Ok(())
 }
 
+/// Store a new refresh token. Only the SHA-256 hash is persisted; the raw
+/// token is delivered once, as an httpOnly cookie.
+pub async fn create_refresh_token(
+    pool: &DbPool,
+    user_id: Uuid,
+    token_hash: &str,
+    expires_at: DateTime<Utc>,
+    user_agent: Option<&str>,
+) -> Result<RefreshTokenRow> {
+    sqlx::query_as::<_, RefreshTokenRow>(
+        r#"
+        INSERT INTO refresh_tokens (user_id, token_hash, expires_at, user_agent)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, user_id, token_hash, created_at, expires_at, last_used_at, revoked_at
+        "#,
+    )
+    .bind(user_id)
+    .bind(token_hash)
+    .bind(expires_at)
+    .bind(user_agent)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(map_db_error)
+}
+
+/// Look up a refresh token by its hash. Callers map `NotFound` to
+/// `Unauthorized` — a missing, revoked, or expired row must not be
+/// distinguishable at the HTTP layer.
+pub async fn get_refresh_token_by_hash(
+    pool: &DbPool,
+    token_hash: &str,
+) -> Result<RefreshTokenRow> {
+    sqlx::query_as::<_, RefreshTokenRow>(
+        r#"
+        SELECT id, user_id, token_hash, created_at, expires_at, last_used_at, revoked_at
+        FROM refresh_tokens
+        WHERE token_hash = $1
+        "#,
+    )
+    .bind(token_hash)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(map_db_error)?
+    .ok_or(NivritError::NotFound("refresh token".into()))
+}
+
+/// Refresh-token use is throttled the same way PATs are: the row is touched
+/// at most once a minute, so an attacker replaying a stolen cookie can't
+/// detect whether it is still valid by watching `last_used_at`.
+pub async fn touch_refresh_token(pool: &DbPool, token_hash: &str) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE refresh_tokens
+        SET last_used_at = NOW()
+        WHERE token_hash = $1
+          AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
+        "#,
+    )
+    .bind(token_hash)
+    .execute(pool.inner())
+    .await
+    .map_err(map_db_error)?;
+    Ok(())
+}
+
+/// Revoke a refresh token (logout). Idempotent: revoking an unknown or
+/// already-revoked token is a no-op success so logout can't be probed.
+pub async fn revoke_refresh_token(pool: &DbPool, token_hash: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1 AND revoked_at IS NULL",
+    )
+    .bind(token_hash)
+    .execute(pool.inner())
+    .await
+    .map_err(map_db_error)?;
+    Ok(())
+}
+
 fn role_as_str(role: Role) -> &'static str {
     match role {
         Role::Admin => "admin",

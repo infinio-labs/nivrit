@@ -55,6 +55,9 @@ import {
   restoreSecretVersion,
   listAuditLogs,
   verifyAuditLog,
+  refreshSession,
+  logout,
+  getMe,
   type AuditLogEntry,
   type CreatedPat,
   type LoginResult,
@@ -108,6 +111,59 @@ export function getSession(): Session | null {
 
 export function clearSession(): void {
   session = null;
+}
+
+/**
+ * A freshly-refreshed access token awaiting a password to rebuild the session
+ * (the unlock flow): after a reload the auth cookie is still valid, so we can
+ * skip the full login and only ask for the master password, which is the one
+ * thing that can unwrap the private key.
+ */
+let pendingToken: string | null = null;
+
+export function getPendingToken(): string | null {
+  return pendingToken;
+}
+
+export function clearPendingToken(): void {
+  pendingToken = null;
+}
+
+/**
+ * Silently renew the access token from the httpOnly refresh cookie. When a
+ * live session exists its token is swapped in place (transparent 401 retry);
+ * otherwise the token is staged for `unlockSession`.
+ */
+export async function tryRefreshSession(): Promise<boolean> {
+  try {
+    const { token } = await refreshSession();
+    if (session) {
+      session.token = token;
+    } else {
+      pendingToken = token;
+    }
+    return true;
+  } catch {
+    pendingToken = null;
+    return false;
+  }
+}
+
+/** Rebuild a full session from a staged refresh token + master password. */
+export async function unlockSession(password: string): Promise<Session> {
+  const token = pendingToken;
+  if (!token) throw new Error('No session to unlock — please sign in again.');
+  const user = await getMe(token);
+  const s = await buildSession({ token, user }, password);
+  pendingToken = null;
+  return s;
+}
+
+/** Sign out everywhere: revoke the refresh token server-side, then drop keys. */
+export async function logoutSession(): Promise<void> {
+  await logout();
+  clearSession();
+  pendingToken = null;
 }
 
 /** The key new writes should use for a project. Throws if the caller isn't a

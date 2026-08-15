@@ -234,3 +234,17 @@ pub struct AccessLogRow {
     /// This entry's own chain hash -- becomes the next entry's `prev_hash`.
     pub entry_hash: Option<Vec<u8>>,
 }
+
+#[derive(Debug, FromRow)]
+/// A stored refresh-token row. Only the SHA-256 hash of the token is kept, so
+/// a dump of this table leaks nothing usable; the token itself is 256 random
+/// bits delivered to the client as an httpOnly cookie.
+pub struct RefreshTokenRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub token_hash: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}

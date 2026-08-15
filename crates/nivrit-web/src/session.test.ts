@@ -3,9 +3,12 @@ import { encapsulateProjectKey, generateUserKeypair, initCrypto } from './crypto
 import {
   clearSession,
   getEncryptedSecret,
+  getPendingToken,
   getSession,
   loginSession,
   rotateProjectKeySession,
+  tryRefreshSession,
+  unlockSession,
 } from './session';
 
 const PASSWORD = 'correct horse battery staple';
@@ -241,5 +244,27 @@ describe('versioned project keys (ADR 0008)', () => {
     // The old version stays cached -- rotation doesn't forget history.
     expect(state!.versions.has(1)).toBe(true);
     expect(state!.versions.has(2)).toBe(true);
+  });
+});
+
+describe('refresh sessions', () => {
+  test('tryRefreshSession stages the token for unlock when no session exists', async () => {
+    globalThis.fetch = mockFetch({
+      'POST /auth/refresh': { token: 'fresh-token', expires_in: 3600 },
+    });
+    expect(await tryRefreshSession()).toBe(true);
+    expect(getPendingToken()).toBe('fresh-token');
+  });
+
+  test('tryRefreshSession fails cleanly when the cookie is gone', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response('unauthorized', { status: 401 }))
+    ) as unknown as typeof globalThis.fetch;
+    expect(await tryRefreshSession()).toBe(false);
+    expect(getPendingToken()).toBeNull();
+  });
+
+  test('unlockSession without a staged token explains itself', async () => {
+    await expect(unlockSession('whatever')).rejects.toThrow('No session to unlock');
   });
 });
