@@ -7,6 +7,11 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual re-kick: GitHub's event delivery has dropped tag-push events for
+  # this repo before, silently stranding a release. Dispatch runs release.yml
+  # on the current default branch — the docker job reads the version from the
+  # v* tag, so re-run it only when the tag exists.
+  workflow_dispatch:
 
 permissions:
   contents: write   # create the GitHub Release

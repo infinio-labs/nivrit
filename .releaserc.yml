@@ -30,6 +30,11 @@ plugins:
         - CHANGELOG.md
         - Cargo.toml
         - Cargo.lock
+        # The workspace crates pin sibling deps with `version = "=X.Y.Z"`;
+        # bump-versions.py moves those pins, so they must be committed too or
+        # the tag ships with pins that don't match the workspace version.
+        - crates/nivrit-crypto/Cargo.toml
+        - sdks/rust/Cargo.toml
         - crates/nivrit-web/package.json
         - sdks/node/package.json
         - sdks/node/bun.lock

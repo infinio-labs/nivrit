@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 # Published to crates.io alongside this crate, so it needs a version: a path
 # alone does not survive packaging.
-nivrit-core = { path = "../nivrit-core", version = "=1.0.0" }
+nivrit-core = { path = "../nivrit-core", version = "=1.0.1" }
 
 aes-gcm = { workspace = true }
 chacha20poly1305 = { workspace = true }
