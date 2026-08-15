@@ -103,6 +103,28 @@ def main() -> None:
     lock.write_text("".join(out))
     print(f"bumped Cargo.lock ({seen} nivrit-* packages)")
 
+    # Path-dependency version pins: crates depending on sibling workspace
+    # crates pin them with `version = "=X.Y.Z"` alongside the path (e.g.
+    # `nivrit-core = { path = "../nivrit-core", version = "=0.1.0" }`). The
+    # release bumps the workspace version, so these pins must move with it or
+    # `--locked` resolution fails: `=0.1.0` can't be satisfied by a workspace
+    # now at 1.0.0. Only nivrit-* pins are touched — never third-party ones.
+    pin_re = re.compile(
+        rf'^(nivrit[\w-]*\s*=\s*\{{[^}}]*?)version = "={SEMVER}"',
+        re.MULTILINE,
+    )
+    pin_manifests = sorted((ROOT / "crates").glob("*/Cargo.toml")) + sorted(
+        (ROOT / "sdks").glob("*/Cargo.toml")
+    )
+    for manifest in pin_manifests:
+        text = manifest.read_text()
+        new_text, n = pin_re.subn(
+            lambda m: m.group(1) + f'version = "={version}"', text
+        )
+        if n:
+            manifest.write_text(new_text)
+            print(f"bumped {manifest.relative_to(ROOT)} ({n} pin(s))")
+
     # --- Web UI ---------------------------------------------------------------
     bump_json("crates/nivrit-web/package.json", lambda d: d.update(version=version))
 

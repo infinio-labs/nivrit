@@ -38,4 +38,10 @@ plugins:
         - sdks/java/pom.xml
         - sdks/dotnet/Nivrit/Nivrit.csproj
         - sdks/elixir/mix.exs
-      message: "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      message: "chore(release): ${nextRelease.version}\n\n${nextRelease.notes}"
+      # No [skip ci]: a [skip ci] release commit ALSO suppresses the tag-push
+      # workflow (.github/workflows/release.yml) because GitHub skips
+      # push-triggered runs when the pushed commit's message carries it — the
+      # tag points at the release commit, so the publish never fires. Without
+      # it, the release commit re-runs CI once (which re-triggers semantic-
+      # release, which finds nothing release-worthy and no-ops).
