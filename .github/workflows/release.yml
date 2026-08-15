@@ -125,8 +125,14 @@ jobs:
           generate_release_notes: true
 
   # ---- Publish the registry SDKs (helper bundled per ecosystem) --------------
+  # Opt-in: needs credentials for each registry (NPM_TOKEN, GEM_HOST_API_KEY,
+  # MAVEN_USERNAME/PASSWORD, NUGET_API_KEY, HEX_API_KEY, CARGO_REGISTRY_TOKEN,
+  # plus the PyPI trusted-publisher mapping). Set the repository variable
+  # PUBLISH_SDKS=true once those exist; until then the job is skipped so a
+  # release run stays green without them.
   publish-sdks:
     name: Publish ${{ matrix.sdk }}
+    if: vars.PUBLISH_SDKS == 'true'
     runs-on: ubuntu-24.04
     needs: build-helper
     strategy:
@@ -273,6 +279,7 @@ jobs:
   # crates.io. If not, add them ahead of this in dependency order, or this fails.
   publish-rust:
     name: Publish Rust (crates.io)
+    if: vars.PUBLISH_SDKS == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

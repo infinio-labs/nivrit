@@ -118,6 +118,12 @@ decision — see [`.env.example`](.env.example) and
 > *Change visibility*), or set the org's package default to public — otherwise
 > `docker pull` without authentication will 401.
 
+SDK registry publishes (npm, PyPI, RubyGems, Maven Central, NuGet, Hex,
+crates.io) are **opt-in**: set the repository variable `PUBLISH_SDKS=true`
+once the per-registry credentials exist (see
+[`.github/workflows/release.yml`](.github/workflows/release.yml)). Until then
+those jobs are skipped and the release run stays green.
+
 Versioning rules: `feat:` commits bump the minor, `fix:`/`perf:` bump the
 patch, `BREAKING CHANGE`/`!` bumps the major; `chore:`/`docs:`/`ci:` commits
 do **not** produce a release. The first release of this repo will be
