@@ -117,9 +117,9 @@ jobs:
         with:
           shared-key: nivrit-api
 
-      - uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
-        with:
-          tool: sqlx-cli@0.9.0
+      # install-action's sqlx-cli@0.9.0 fallback is broken on current runner
+      # images; install from crates.io instead (see ci.yml).
+      - run: cargo install sqlx-cli --locked --version 0.9.0 --no-default-features --features postgres
 
       - name: Run migrations
         run: sqlx migrate run --source crates/nivrit-db/migrations
