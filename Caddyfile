@@ -1,0 +1,32 @@
+:8080 {
+	# Security headers. For an end-to-end-encrypted app the CSP is the primary
+	# defense: without it an XSS can read the in-memory private/project keys and
+	# exfiltrate every decrypted secret, defeating client-side encryption.
+	#   - 'wasm-unsafe-eval' is required to instantiate the crypto WASM module.
+	#   - style-src 'unsafe-inline' covers Tailwind/React inline styles.
+	#   - img-src data: covers the TOTP QR code.
+	#   - connect-src 'self': the API is served same-origin via the /api proxy
+	#     below, so build the frontend with VITE_API_URL=/api.
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+
+	# Proxy API requests to the Nivrit API service. handle_path strips the
+	# /api prefix before forwarding, same as nginx's proxy_pass with a
+	# trailing slash did. reverse_proxy sets X-Forwarded-For/-Proto/-Host
+	# itself -- no need to set them by hand the way nginx required.
+	handle_path /api/* {
+		reverse_proxy api:4000
+	}
+
+	# Client-side routing: serve index.html for unknown paths.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

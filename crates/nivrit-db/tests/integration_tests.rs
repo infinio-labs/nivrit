@@ -895,3 +895,98 @@ async fn environment_member_none_role_roundtrips_and_is_listed_as_denied() {
         "an environment with no override must not show up as denied"
     );
 }
+
+#[tokio::test]
+async fn reencrypt_secret_rewraps_in_place_without_versioning() {
+    let pool = setup_pool().await;
+    let org_id = create_test_org(&pool).await;
+    let user_id = create_test_user(&pool).await;
+    queries::add_org_member(&pool, org_id, user_id, Role::Admin)
+        .await
+        .unwrap();
+    let project_id = create_test_project(&pool, org_id).await;
+    add_test_project_member_with_key(&pool, project_id, user_id).await;
+    let env_id = create_test_environment(&pool, project_id).await;
+
+    let create_nonce = Uuid::new_v4().as_bytes().to_vec();
+    let created = queries::create_secret(
+        &pool,
+        project_id,
+        env_id,
+        None,
+        "REWRAP_ME",
+        b"v1-ciphertext",
+        &create_nonce,
+        "aes256gcm-v1",
+        1,
+    )
+    .await
+    .unwrap();
+    assert_eq!(created.version, 1);
+
+    let grants = vec![queries::RotationGrant {
+        user_id,
+        encrypted_project_key: b"new-key",
+        project_key_nonce: b"new-nonce",
+        project_key_algorithm: "hybrid_x25519_ml_kem_768_aes256gcm_v1",
+    }];
+    queries::rotate_project_key(&pool, project_id, user_id, &grants)
+        .await
+        .unwrap();
+
+    // Rewrap onto version 2. Same plaintext, different ciphertext bytes (as
+    // it would be after a real client-side decrypt/re-encrypt) -- what
+    // matters is that the row's `version` (content-version counter) does not
+    // move and no `secret_versions` history row appears.
+    let rewrap_nonce = Uuid::new_v4().as_bytes().to_vec();
+    let rewrapped = queries::reencrypt_secret(
+        &pool,
+        project_id,
+        env_id,
+        None,
+        "REWRAP_ME",
+        b"v2-ciphertext",
+        &rewrap_nonce,
+        "aes256gcm-v1",
+        1,
+        2,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rewrapped.project_key_version, 2);
+    assert_eq!(rewrapped.encrypted_value, b"v2-ciphertext");
+    assert_eq!(
+        rewrapped.version, 1,
+        "re-encryption must not bump the content version"
+    );
+
+    let history = queries::list_secret_versions(&pool, rewrapped.id, 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        history.len(),
+        1,
+        "re-encryption must not add a secret_versions row"
+    );
+
+    // Retrying with a stale `from_version` (already moved to 2) is a
+    // conflict, not a silent no-op or clobber.
+    let conflict_nonce = Uuid::new_v4().as_bytes().to_vec();
+    let conflict = queries::reencrypt_secret(
+        &pool,
+        project_id,
+        env_id,
+        None,
+        "REWRAP_ME",
+        b"v3-ciphertext",
+        &conflict_nonce,
+        "aes256gcm-v1",
+        1,
+        2,
+    )
+    .await;
+    assert!(
+        matches!(conflict, Err(nivrit_core::NivritError::Conflict(_))),
+        "stale from_version must be rejected, got {conflict:?}"
+    );
+}

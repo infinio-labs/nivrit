@@ -878,6 +878,55 @@ pub async fn create_secret(
     .map_err(map_db_error)
 }
 
+/// Rewrap a secret's ciphertext under a different project-key version without
+/// treating it as a content edit (ADR 0008 addendum, "collapse to latest
+/// version"): no `version` bump, no `secret_versions` row. `from_version` is
+/// an optimistic-concurrency guard -- if the stored row has since moved to a
+/// different version (e.g. a real write raced this call), zero rows match and
+/// the caller gets `Conflict` rather than silently clobbering it.
+#[allow(clippy::too_many_arguments)]
+pub async fn reencrypt_secret(
+    pool: &DbPool,
+    project_id: Uuid,
+    environment_id: Uuid,
+    folder_id: Option<Uuid>,
+    key: &str,
+    encrypted_value: &[u8],
+    nonce: &[u8],
+    algorithm: &str,
+    from_version: i32,
+    to_version: i32,
+) -> Result<SecretRow> {
+    let row = sqlx::query_as!(
+        SecretRow,
+        r#"
+        UPDATE secrets
+        SET encrypted_value = $1, nonce = $2, algorithm = $3, project_key_version = $4, updated_at = NOW()
+        WHERE project_id = $5 AND environment_id = $6 AND folder_id IS NOT DISTINCT FROM $7
+          AND key = $8 AND project_key_version = $9
+        RETURNING id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version, created_at, updated_at
+        "#,
+        encrypted_value,
+        nonce,
+        algorithm,
+        to_version,
+        project_id,
+        environment_id,
+        folder_id,
+        key,
+        from_version
+    )
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(map_db_error)?;
+
+    row.ok_or_else(|| {
+        NivritError::Conflict(format!(
+            "secret '{key}' is not at project-key version {from_version} anymore; refresh and retry"
+        ))
+    })
+}
+
 pub async fn get_secret(
     pool: &DbPool,
     project_id: Uuid,

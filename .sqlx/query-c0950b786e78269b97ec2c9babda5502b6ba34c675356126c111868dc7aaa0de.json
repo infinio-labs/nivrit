@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, created_at, updated_at\n        FROM secrets\n        WHERE project_id = $1\n          AND ($2::uuid IS NULL OR environment_id = $2)\n          AND folder_id IS NOT DISTINCT FROM $3\n        ORDER BY key ASC\n        LIMIT $4 OFFSET $5\n        ",
+  "query": "\n        UPDATE secrets\n        SET encrypted_value = $1, nonce = $2, algorithm = $3, project_key_version = $4, updated_at = NOW()\n        WHERE project_id = $5 AND environment_id = $6 AND folder_id IS NOT DISTINCT FROM $7\n          AND key = $8 AND project_key_version = $9\n        RETURNING id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version, created_at, updated_at\n        ",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,17 @@
       },
       {
         "ordinal": 9,
+        "name": "project_key_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "project_key_version"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -127,11 +138,15 @@
     ],
     "parameters": {
       "Left": [
+        "Bytea",
+        "Bytea",
+        "Text",
+        "Int4",
         "Uuid",
         "Uuid",
         "Uuid",
-        "Int8",
-        "Int8"
+        "Text",
+        "Int4"
       ]
     },
     "nullable": [
@@ -145,8 +160,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "6cc16427e4c649b241bec565ae39bb2115138d8b8eee185b456bfbe4c8071b17"
+  "hash": "c0950b786e78269b97ec2c9babda5502b6ba34c675356126c111868dc7aaa0de"
 }

@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT pkv.version, pkg.encrypted_project_key, pkg.project_key_nonce, pkg.project_key_algorithm, pkg.created_at\n        FROM project_key_grants pkg\n        JOIN project_key_versions pkv ON pkv.id = pkg.project_key_version_id\n        WHERE pkv.project_id = $1 AND pkg.user_id = $2\n        ORDER BY pkv.version ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "project_key_versions",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "encrypted_project_key",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "project_key_grants",
+            "name": "encrypted_project_key"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "project_key_nonce",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "project_key_grants",
+            "name": "project_key_nonce"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "project_key_algorithm",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "project_key_grants",
+            "name": "project_key_algorithm"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "project_key_grants",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "04150682a1c983453a6f971ec2a1815aa8dd3d5ae5da2de9fb4dd33e7aca7fc9"
+}

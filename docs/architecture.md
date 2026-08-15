@@ -180,6 +180,11 @@ which is what lets an account created in the browser log in from the CLI.
   everything created from that point forward; historical secrets stay readable under
   whichever version encrypted them, by design — the same envelope-rotation pattern
   NIST SP 800-57, AWS KMS, and HashiCorp Vault use.
+- The separate, opt-in `collapse-project-key` re-encrypts secrets still on an older
+  version onto the current one ([ADR 0008 addendum](adr/0008-versioned-project-keys.md#addendum-2026-08-01-the-opt-in-collapse-tool)).
+  It rewraps ciphertext in place rather than writing a new content version —
+  the plaintext never changes, only what wraps it — and is audited as `reencrypt`,
+  not `write`, so the audit trail doesn't misrepresent a rewrap as an edit.
 - Environment-scoped role overrides ([ADR 0009](adr/0009-environment-scoped-rbac.md))
   are authorization only, not a second key-management concept: an override changes
   whether the API lets a call through, not what a member can decrypt. Project-key
@@ -187,13 +192,12 @@ which is what lets an account created in the browser log in from the CLI.
 
 ## Future work
 
-- Optional bulk re-encryption ("collapse to latest version") for project keys, so an
-  org can fully destroy an old key version's usefulness rather than just add a new
-  one. Project-key rotation itself (mint a new version, grant it to current members,
-  leave existing ciphertext alone) is done — see "Key-management notes" above and
-  [ADR 0008](adr/0008-versioned-project-keys.md) — this would run client-side on top
-  of it, the way Vault's `rewrap` or AWS's `ReEncrypt` sit on top of their own
-  rotation.
+- ✅ Bulk re-encryption ("collapse to latest version") for project keys, so an org
+  can fully destroy an old key version's usefulness rather than just add a new one.
+  `niv collapse-project-key` runs client-side on top of rotation, the way Vault's
+  `rewrap` or AWS's `ReEncrypt` sit on top of their own rotation — see
+  "Key-management notes" above and the
+  [ADR 0008 addendum](adr/0008-versioned-project-keys.md#addendum-2026-08-01-the-opt-in-collapse-tool).
 - ✅ Wire the Python and Go SDKs to versioned project keys, matching server, CLI,
   web UI, and the Node SDK: `rotate_project_key()`/`RotateProjectKey()`, a
   `{version: key}` cache instead of one flat key, and per-secret
@@ -211,6 +215,8 @@ which is what lets an account created in the browser log in from the CLI.
   overrides.
 - ✅ Post-quantum signatures (ML-DSA-65) for audit-log non-repudiation, hash-chained
   so deletion and reordering are detectable, not just per-entry content tampering.
-- ✅ HSM/KMS-backed key-encryption keys (AWS KMS, Azure Key Vault).
+- ✅ HSM/KMS-backed key-encryption keys (AWS KMS, Azure Key Vault). See
+  [`docs/kek-operations.md`](kek-operations.md) for IAM/RBAC policies and
+  Terraform to provision the underlying cloud key.
 - Recovery phrases and key escrow options.
 - Re-encryption worker for project-key rotation and algorithm upgrades.

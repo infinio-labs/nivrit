@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO project_key_grants (project_key_version_id, user_id, encrypted_project_key, project_key_nonce, project_key_algorithm)\n        VALUES ($1, $2, $3, $4, $5)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Bytea",
+        "Bytea",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "95e62041921e25a0e348f354f370768cee43cc380f0c6aa69fd6d4c6488bd505"
+}

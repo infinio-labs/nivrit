@@ -2,7 +2,7 @@
 
 **Project:** Nivrit (client-side end-to-end encrypted secret manager)  
 **Path:** `/home/sid/Projects/InfinioLabs/nivrit`  
-**Last updated:** 2026-08-01 (Node/Python/Go SDKs wired to versioned project keys; environment-scoped RBAC with web UI + CLI management, ADR 0008/0009/0010)
+**Last updated:** 2026-08-01 (Node/Python/Go SDKs wired to versioned project keys; environment-scoped RBAC with web UI + CLI management, ADR 0008/0009/0010; `niv collapse-project-key` re-encryption tool; cloud KEK operational docs; Docker images cut ~68%/~25% via distroless + Caddy)
 
 This document captures the implementation progress across all roadmap phases, testing, tooling, and dependency hygiene.
 
@@ -32,6 +32,7 @@ This document captures the implementation progress across all roadmap phases, te
 | Secret CRUD completeness | ✅ Done | `list_secrets`, `delete_secret`, `list_projects`, and `list_environments` endpoints; CLI and web dashboard updated. `delete_secret` returns `NotFound` when the key is absent and captures the deleted `secret_id` for the audit trail. |
 | Key rotation authorization | ✅ Done | `POST /users/me/rotate-key` verifies project membership + `Member` role for each rotated membership key before updating it. |
 | Versioned project-key rotation | ✅ Done | `POST /projects/{id}/rotate-key` mints the next version of a project's symmetric key and grants it only to current members (`project_key_versions`/`project_key_grants` tables); `GET /projects/{id}/key-versions` and `GET /projects/{id}/members` support it. No existing secret is touched — matches the NIST/AWS KMS/Vault envelope-rotation pattern rather than bulk re-encryption. Server, CLI (`niv rotate-project-key`), web UI (Members tab, "Rotate key now"), and the Node, Python, and Go SDKs (`session.rotateProjectKey()` / `rotate_project_key()` / `RotateProjectKey()`) are all wired. See [ADR 0008](adr/0008-versioned-project-keys.md). |
+| Collapse-to-latest-version tool | ✅ Done | `niv collapse-project-key` re-encrypts every secret still on an older project-key version onto the current one, the separate opt-in pass ADR 0008 explicitly deferred. Client-side, one secret at a time (walks every environment and folder); a new `PUT /projects/{id}/secrets/{key}/reencrypt` endpoint does an in-place rewrap — no `secret_versions` row, no content-version bump, since the plaintext doesn't change — under a distinct `reencrypt` audit action and optimistic concurrency (`409 Conflict` if the secret moved versions since the caller last read it). See [ADR 0008 addendum](adr/0008-versioned-project-keys.md#addendum-2026-08-01-the-opt-in-collapse-tool). |
 | Environment-scoped RBAC | ✅ Done | `environment_memberships` table holds optional per-user, per-environment role overrides that supersede the project-level role for that environment only; absent means the project role applies unchanged. `GET/PUT/DELETE /projects/{id}/environments/{env_id}/members[/{user_id}]` manage overrides (PUT/DELETE require project Admin; target must already be a project member). All 6 secret handlers (3 write: `create_secret`/`delete_secret`/`restore_secret`; 3 read: `list_secrets`/`get_secret`/`list_secret_versions`) are gated through `require_environment_role`. A 4th role tier, `none` (rank 0, below Viewer), makes the read gate meaningful — it's the only way an override can *deny* rather than just grant, since every member already outranks Viewer. `none` is override-only; rejected as a project/org role. CLI (`niv env-role set/list/remove`) and web UI (Members tab → "Environment access") manage overrides end-to-end. See [ADR 0009](adr/0009-environment-scoped-rbac.md) and [ADR 0010](adr/0010-none-role-for-read-gating.md). |
 
 ### Phase 1 — Transport-level PQC ✅
@@ -92,7 +93,7 @@ This document captures the implementation progress across all roadmap phases, te
 | `nivrit-auth` | `src/jwt.rs`, `src/password.rs` | JWT signing/validation, Argon2 password hashing. |
 | `nivrit-crypto` | `src/e2ee.rs`, `src/hybrid.rs`, `src/keys.rs`, `src/password.rs`, `src/signatures.rs`, `src/kek.rs`, `src/suite.rs` | Suite roundtrips, hybrid KEM + re-encryption, key generation, Argon2 derivation, ML-DSA sign/verify roundtrips, local KEK wrap/unwrap, AWS KMS and Azure Key Vault backend compilation. |
 | `nivrit-api` | `src/error.rs`, `src/handlers/authz.rs`, `src/handlers/orgs.rs`, `src/handlers/projects.rs`, `src/handlers/secrets.rs`, `src/handlers/audit.rs`, `src/signing.rs`, `src/tls.rs` | Error mapping, authz role checks, org/project/secret/audit handler edge cases, ML-DSA audit-log signing/verification, TLS configuration. |
-| `nivrit-db` | `tests/integration_tests.rs` | Live Postgres tests for user/org/project/env/secret/version/audit-log CRUD and conflict handling. |
+| `nivrit-db` | `tests/integration_tests.rs` | Live Postgres tests for user/org/project/env/secret/version/audit-log CRUD and conflict handling, including in-place secret re-encryption (no version bump, no history row, stale `from_version` rejected as `Conflict`). |
 | `nivrit-cli` | `src/main.rs` | Private-key encrypt/decrypt, self-encapsulated project-key roundtrip. |
 | `nivrit-web-crypto` | `src/lib.rs` | `wasm-bindgen-test` browser tests for keypair generation, private-key decryption, hybrid encapsulation roundtrip, and AES-GCM roundtrip. |
 
@@ -157,6 +158,60 @@ All commands currently pass.
 - Workspace-level `.sqlx/` query metadata generated and checked in.
 - `SQLX_OFFLINE=true cargo check --workspace --exclude nivrit-web-crypto` passes without a live database.
 
+### Minimal Docker images ✅
+
+Both published images were rebuilt and measured (`docker images`), not estimated:
+
+| Image | Before | After | Base |
+|-------|-------:|------:|------|
+| `nivrit-api` | 117 MB | **36.9 MB** | `gcr.io/distroless/cc-debian12:nonroot` (was `debian:bookworm-slim`) |
+| `nivrit-web` | 63.3 MB | **47.4 MB** | `gcr.io/distroless/static-debian12:nonroot` + a static Caddy binary (was `nginx:alpine`) |
+
+**API.** `ldd` on the release binary shows only `libc`/`libgcc`/`libm` — rustls +
+`aws-lc-rs` (`prefer-post-quantum` feature) are statically linked, no OpenSSL
+at runtime — so `distroless/cc` (glibc + libstdc++/libgcc, no shell, no
+package manager) is sufficient; a fully static `scratch` build would need a
+musl cross-compile of `aws-lc-rs`'s C library, untested and not attempted.
+Distroless has no shell, which forced two changes that are also just better
+design, not only smaller:
+- **Migrations are embedded in the binary** (`DbPool::migrate`, `sqlx::migrate!`)
+  and run at the start of `main()`, instead of a separate `sqlx-cli` binary
+  invoked from a `sh` entrypoint script — one binary, one startup sequence.
+- **`nivrit-api --healthcheck`** replaces `curl -f http://localhost:4000/health`
+  in both compose files' `HEALTHCHECK` — the binary hits its own `/health`
+  over loopback and exits 0/1, since there's no `curl` (or shell) in the image
+  to do it externally.
+- The `niv` CLI binary was also dropped from this image — nothing in it ever
+  used the CLI at runtime, it was just carried along.
+
+All verified live in a real container, not just by inspecting the Dockerfile:
+booted against an empty Postgres and confirmed all 20 migrations applied with
+no external migration step, `/health`/`/ready` both 200, `--healthcheck` exits
+0 when healthy, `docker exec ... id` fails (no shell present, confirming a
+real attack-surface reduction, not just a smaller number), and the process
+runs as uid 65532 (`nonroot`), not root.
+
+**Web.** `nginx.web.conf` did three jobs — CSP/security headers, SPA fallback
+routing, and reverse-proxying `/api/` to the backend so the browser sees one
+origin (`connect-src 'self'` in the CSP holds, no CORS hop needed) — so the
+replacement had to keep all three, not just serve static files smaller.
+Caddy does all three natively (`Caddyfile`); the official `caddy:2-alpine`
+binary is statically linked (confirmed with `ldd`: "not a dynamic program"),
+so it runs on `distroless/static` — no libc at all, just the binary and the
+CA bundle distroless already ships. Runs on port 8080 internally now (the
+`nonroot` user can't bind privileged port 80); the host-side port mapping in
+both compose files is unchanged (`8080:8080` instead of `8080:80`). Verified
+live: security headers present with the exact same values as the nginx
+config, an unknown deep path falls back to `index.html` (200, not 404), and
+`/api/health` through the proxy reaches the real API container and returns
+`ok`.
+
+A genuinely smaller *floor* exists for the web image (~10-15 MB) by dropping
+the reverse proxy entirely and serving pure static files, but that changes
+the CSP (`connect-src 'self'` would need to name the API's origin explicitly)
+and makes CORS load-bearing instead of same-origin — a real security-posture
+decision, not a size optimization, and deliberately not made here.
+
 ---
 
 ## 4. Key Design Decisions
@@ -183,8 +238,6 @@ All commands currently pass.
 ## 5. Remaining Work & Known Gaps
 
 1. **JWT/TLS certificate PQ signatures:** ML-DSA is wired into application-level audit-log signing. SLH-DSA and replacing HMAC JWT or X.509 TLS certs with PQ signatures are deferred until a maintained implementation and ecosystem support mature.
-2. **Operational docs for cloud KEKs:** Add example IAM/RBAC policies and Terraform snippets for AWS KMS and Azure Key Vault KEKs.
-3. **No bulk re-encryption / "collapse to latest version" tool for project keys.** Rotation (see the feature table above and [ADR 0008](adr/0008-versioned-project-keys.md)) mints a new version without touching old ciphertext, by design — matching how NIST SP 800-57, AWS KMS, and HashiCorp Vault handle this. An org that wants to fully destroy an old key version's usefulness (not just add a new one) would need every secret re-encrypted onto the latest version, the way Vault's `rewrap` or AWS's `ReEncrypt` work for their own rotation. Not built: would need to run client-side, since nivrit's server never holds `project_key` plaintext.
 
 ---
 
@@ -192,4 +245,5 @@ All commands currently pass.
 
 - `docs/architecture.md` — System architecture and threat model.
 - `docs/quantum-readiness-report.md` — Original PQC recommendations and roadmap.
+- `docs/kek-operations.md` — IAM/RBAC policies and Terraform for the AWS KMS and Azure Key Vault `KekBackend` implementations.
 - `RESEARCH.md` — Independent, citation-backed review of design decisions across the whole product; source of the gaps listed in §5.

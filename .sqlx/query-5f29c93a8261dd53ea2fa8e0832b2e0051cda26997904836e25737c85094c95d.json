@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, created_at, updated_at\n        FROM secrets\n        WHERE project_id = $1 AND environment_id = $2 AND folder_id IS NOT DISTINCT FROM $3 AND key = $4\n        ",
+  "query": "\n        WITH target AS (\n            SELECT s.id AS secret_id, sv.encrypted_value, sv.nonce, sv.algorithm, sv.project_key_version\n            FROM secrets s\n            JOIN secret_versions sv ON sv.secret_id = s.id AND sv.version = $5\n            WHERE s.project_id = $1 AND s.environment_id = $2\n              AND s.folder_id IS NOT DISTINCT FROM $3 AND s.key = $4\n        ),\n        upserted AS (\n            UPDATE secrets\n            SET encrypted_value = target.encrypted_value,\n                nonce = target.nonce,\n                algorithm = target.algorithm,\n                project_key_version = target.project_key_version,\n                version = secrets.version + 1,\n                updated_at = NOW()\n            FROM target\n            WHERE secrets.id = target.secret_id\n            RETURNING secrets.id, secrets.project_id, secrets.environment_id, secrets.folder_id,\n                      secrets.key, secrets.encrypted_value, secrets.nonce, secrets.algorithm,\n                      secrets.version, secrets.project_key_version, secrets.created_at, secrets.updated_at\n        ),\n        versioned AS (\n            INSERT INTO secret_versions (secret_id, encrypted_value, nonce, version, algorithm, project_key_version)\n            SELECT id, encrypted_value, nonce, version, algorithm, project_key_version FROM upserted\n        )\n        SELECT id, project_id, environment_id, folder_id, key, encrypted_value, nonce, algorithm, version, project_key_version, created_at, updated_at\n        FROM upserted\n        ",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,17 @@
       },
       {
         "ordinal": 9,
+        "name": "project_key_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "secrets",
+            "name": "project_key_version"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -130,7 +141,8 @@
         "Uuid",
         "Uuid",
         "Uuid",
-        "Text"
+        "Text",
+        "Int4"
       ]
     },
     "nullable": [
@@ -144,8 +156,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "689edeeee03fd69cd9eee08db10608787ea897cd2fc69f0d235d2a6292af4def"
+  "hash": "5f29c93a8261dd53ea2fa8e0832b2e0051cda26997904836e25737c85094c95d"
 }

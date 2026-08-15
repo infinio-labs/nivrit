@@ -25,4 +25,14 @@ impl DbPool {
         sqlx::query("SELECT 1").execute(&self.0).await?;
         Ok(())
     }
+
+    /// Apply any pending migrations. Migrations are embedded into the binary
+    /// at compile time (`sqlx::migrate!`), so a deployment never needs a
+    /// separate `sqlx-cli` binary or the migration `.sql` files on disk --
+    /// one binary owns both running the server and getting the schema ready
+    /// for it.
+    pub async fn migrate(&self) -> anyhow::Result<()> {
+        sqlx::migrate!("./migrations").run(&self.0).await?;
+        Ok(())
+    }
 }

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT chain_seq, entry_hash\n        FROM access_logs\n        WHERE project_id = $1\n        ORDER BY chain_seq DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "chain_seq",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "access_logs",
+            "name": "chain_seq"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "entry_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "access_logs",
+            "name": "entry_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "7cb68d2ee68a393ad21a231bb0efcf877141767faae67df2a69e49aa05721466"
+}

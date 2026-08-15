@@ -15,7 +15,7 @@ RUN bun install --frozen-lockfile
 COPY crates/nivrit-web/ ./
 
 # Build for production. The WASM package is already checked in; we skip the
-# wasm-pack build step and point the API client at the nginx-proxied /api path.
+# wasm-pack build step and point the API client at the Caddy-proxied /api path.
 ENV VITE_API_URL=/api
 ENV CI=true
 RUN bun run typecheck && bun run build
@@ -24,11 +24,27 @@ RUN bun run typecheck && bun run build
 RUN mkdir -p dist/assets/wasm/pkg && cp -r src/wasm/pkg/* dist/assets/wasm/pkg/
 
 # -----------------------------------------------------------------------------
-# Runtime stage: serve static files with nginx.
+# Extract the statically-linked Caddy binary. The official binary is built
+# with CGO_ENABLED=0 (confirmed with `ldd` -- "not a dynamic program"), so it
+# runs on `distroless/static`, not just `distroless/cc`: no libc needed at
+# all, just the binary and the CA cert bundle distroless/static already ships.
 # -----------------------------------------------------------------------------
-FROM nginx:1.31.3-alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
+FROM caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d AS caddy-bin
 
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.web.conf /etc/nginx/conf.d/default.conf
+# -----------------------------------------------------------------------------
+# Runtime stage: serve static files and reverse-proxy /api with Caddy instead
+# of nginx. nginx.web.conf did three jobs -- security headers, SPA fallback
+# routing, and reverse-proxying /api/ to the backend -- and Caddyfile does all
+# three too, so this is a size/attack-surface swap, not a behavior change.
+# `:nonroot` runs as a built-in unprivileged user; Caddy listens on 8080
+# because nonroot can't bind the privileged port 80.
+# -----------------------------------------------------------------------------
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35 AS runtime
 
-EXPOSE 80
+COPY --from=caddy-bin /usr/bin/caddy /usr/bin/caddy
+COPY --from=builder /app/dist /srv
+COPY Caddyfile /etc/caddy/Caddyfile
+
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/bin/caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

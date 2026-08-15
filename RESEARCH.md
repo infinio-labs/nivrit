@@ -365,7 +365,14 @@ Every "Notable findings" entry from Sections 3–8, consolidated and triaged. Th
    both pre- and post-rotation secrets). Getting the web UI's Playwright run to pass
    surfaced a real, separate bug — see §9.5 below — not something worth burying in
    this bullet. The Python and Go SDKs are also wired now, each verified the same
-   way (live, two-user, against a real API and helper subprocess). (§5)
+   way (live, two-user, against a real API and helper subprocess). The separate,
+   opt-in re-encryption pass this ADR explicitly deferred ("would need every secret
+   re-encrypted onto the latest version... not built") is now built too:
+   `niv collapse-project-key`, verified live end-to-end (rewraps a pre-rotation
+   secret onto the current version with its plaintext unchanged, correctly skips
+   an already-current secret, records a distinct `reencrypt` audit action rather
+   than `write`, leaves `secret_versions` history untouched, and rejects a
+   stale-version retry with `409 Conflict`). (§5)
 5. ~~**RBAC is flat and project-scoped only**, despite `Environment` and `Folder`
    already existing as addressable models — no way to grant environment- or
    folder-level permissions today. A real gap versus Vault, Infisical, and Doppler.~~

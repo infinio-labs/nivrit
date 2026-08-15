@@ -37,6 +37,14 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
+    // A docker HEALTHCHECK runs this binary again, in the same container, as
+    // a fresh short-lived process -- not a request to the already-running
+    // server. Handled first and separately from the rest of `main` so it
+    // doesn't need a shell or `curl` in the image, just this binary.
+    if std::env::args().any(|a| a == "--healthcheck") {
+        return run_healthcheck().await;
+    }
+
     let config = Config::load()?;
 
     // Structured JSON logs for aggregators in production; human-readable in dev.
@@ -53,6 +61,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let state = AppState::from_config(&config).await?;
+    // Migrations are embedded in the binary (`DbPool::migrate`), not run by a
+    // separate `sqlx-cli` process via a shell entrypoint -- one binary, one
+    // startup sequence, and the runtime image needs neither a shell nor a
+    // second Rust binary just to get the schema ready.
+    state.db.migrate().await?;
 
     // Prometheus metrics: the layer records HTTP request count / duration /
     // in-flight per route+method+status; the handle renders the /metrics text.
@@ -147,6 +160,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/projects/{project_id}/secrets/{key}/versions",
             get(handlers::secrets::list_secret_versions),
+        )
+        .route(
+            "/projects/{project_id}/secrets/{key}/reencrypt",
+            axum::routing::put(handlers::secrets::reencrypt_secret),
         )
         .route(
             "/projects/{project_id}/secrets/{key}/restore",
@@ -290,6 +307,31 @@ async fn main() -> anyhow::Result<()> {
 /// a restart storm.
 async fn health() -> &'static str {
     "ok"
+}
+
+/// `nivrit-api --healthcheck`: a `docker HEALTHCHECK` that doesn't need `curl`
+/// (or a shell) in the image, since it's the same binary that's already
+/// there to run the server. Hits the running server's own `/health` over
+/// loopback -- always reachable regardless of what `NIVRIT_HOST` binds to,
+/// since this always runs inside the same container/network namespace.
+async fn run_healthcheck() -> anyhow::Result<()> {
+    let port = std::env::var("NIVRIT_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(4000);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()?;
+    let res = client
+        .get(format!("http://127.0.0.1:{port}/health"))
+        .send()
+        .await?;
+    anyhow::ensure!(
+        res.status().is_success(),
+        "unhealthy: status {}",
+        res.status()
+    );
+    Ok(())
 }
 
 /// Readiness: the API can actually serve traffic (DB reachable).
