@@ -446,10 +446,7 @@ pub async fn refresh(
 /// POST /auth/logout — revoke the refresh token and clear the cookie.
 /// Idempotent: logging out without a cookie, or twice, still succeeds, so
 /// logout cannot be used to probe token validity.
-pub async fn logout(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> ApiResult<Response> {
+pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Response> {
     if let Some(token) = extract_refresh_token(&headers) {
         let _ = queries::revoke_refresh_token(&state.db, &refresh_token_hash(&token)).await;
     }

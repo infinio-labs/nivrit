@@ -2185,10 +2185,7 @@ pub async fn create_refresh_token(
 /// Look up a refresh token by its hash. Callers map `NotFound` to
 /// `Unauthorized` — a missing, revoked, or expired row must not be
 /// distinguishable at the HTTP layer.
-pub async fn get_refresh_token_by_hash(
-    pool: &DbPool,
-    token_hash: &str,
-) -> Result<RefreshTokenRow> {
+pub async fn get_refresh_token_by_hash(pool: &DbPool, token_hash: &str) -> Result<RefreshTokenRow> {
     sqlx::query_as::<_, RefreshTokenRow>(
         r#"
         SELECT id, user_id, token_hash, created_at, expires_at, last_used_at, revoked_at
