@@ -4,77 +4,54 @@ use aes_gcm::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use nivrit_core::{NivritError, Result};
-use totp_rs::{Algorithm, Secret, TOTP};
+use totp_rs::{Algorithm, Builder, Secret, Totp};
 
 const ISSUER: &str = "Nivrit";
 
+/// Build a TOTP verifier for a base32 secret with nivrit's fixed parameters
+/// (SHA-1, 6 digits, ±1 step skew, 30 s steps). totp-rs 6 only constructs via
+/// its Builder, so all four call sites share this helper.
+fn totp_for(secret: &str, account_name: &str) -> Result<Totp> {
+    let secret = Secret::try_from_base32(secret)
+        .map_err(|e| NivritError::Validation(format!("invalid TOTP secret: {e}")))?;
+    Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .with_issuer(Some(ISSUER.to_string()))
+        .with_account_name(account_name.to_string())
+        .build()
+        .map_err(|e| NivritError::Internal(format!("failed to build TOTP: {e}")))
+}
+
 /// Generate a new base32-encoded TOTP secret.
 pub fn generate_secret() -> String {
-    Secret::generate_secret().to_encoded().to_string()
+    Secret::generate().to_base32()
 }
 
 /// Build an `otpauth://` URI suitable for QR-code rendering.
 pub fn provisioning_uri(secret: &str, email: &str) -> Result<String> {
-    let secret_bytes = Secret::Encoded(secret.to_string())
-        .to_bytes()
-        .map_err(|e| NivritError::Validation(format!("invalid TOTP secret: {}", e)))?;
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        secret_bytes,
-        Some(ISSUER.to_string()),
-        email.to_string(),
-    )
-    .map_err(|e| NivritError::Internal(format!("failed to build TOTP: {}", e)))?;
-    Ok(totp.get_url())
+    totp_for(secret, email)?
+        .to_url()
+        .map_err(|e| NivritError::Internal(format!("failed to build TOTP URI: {e}")))
 }
 
 /// Verify a 6-digit TOTP code and return the matched time step, if any.
 ///
 /// The step lets the caller persist the last accepted value and reject replays
-/// of the same (or an older) code within its validity window.
+/// of the same (or an older) code within its validity window. The ±1 skew
+/// window is baked into the verifier (`skew = 1`).
 pub fn verify_code_step(secret: &str, code: &str) -> Option<u64> {
-    let secret_bytes = Secret::Encoded(secret.to_string()).to_bytes().ok()?;
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        secret_bytes,
-        Some(ISSUER.to_string()),
-        "user".to_string(),
-    )
-    .ok()?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    let step = now / 30;
-    // Match the same ±1 skew window as `verify_code` (check(code, 1)).
-    [step.saturating_sub(1), step, step + 1]
-        .into_iter()
-        .find(|&candidate| totp.generate(candidate * 30) == code)
+    totp_for(secret, "user").ok()?.check_current(code)
 }
 
 /// Verify a 6-digit TOTP code against the secret.
 pub fn verify_code(secret: &str, code: &str) -> bool {
-    let Ok(secret_bytes) = Secret::Encoded(secret.to_string()).to_bytes() else {
-        return false;
-    };
-    let Ok(totp) = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        secret_bytes,
-        Some(ISSUER.to_string()),
-        "user".to_string(),
-    ) else {
-        return false;
-    };
-    totp.check(code, 1)
+    totp_for(secret, "user")
+        .map(|totp| totp.check_current(code).is_some())
+        .unwrap_or(false)
 }
 
 /// At-rest encryption for the TOTP secret using a server-side AES key.
@@ -124,22 +101,12 @@ mod tests {
     use super::*;
 
     fn current_code(secret: &str) -> String {
-        let bytes = Secret::Encoded(secret.to_string()).to_bytes().unwrap();
-        let totp = TOTP::new(
-            Algorithm::SHA1,
-            6,
-            1,
-            30,
-            bytes,
-            Some(ISSUER.to_string()),
-            "user".to_string(),
-        )
-        .unwrap();
+        let totp = totp_for(secret, "user").unwrap();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        totp.generate(now)
+        totp.generate(now).to_string()
     }
 
     #[test]
