@@ -85,6 +85,44 @@ docker compose up -d
 
 For a production-oriented sample, see [`deploy/docker-compose.yml`](deploy/docker-compose.yml).
 
+## Releases & container images
+
+Releases are cut automatically from [Conventional Commits](https://www.conventionalcommits.org/)
+on `main`. Once CI is green, **semantic-release**
+([`.releaserc.yml`](.releaserc.yml)) bumps the version in every manifest,
+commits it, and tags the commit `vX.Y.Z`; the tag then triggers the
+[release pipeline](.github/workflows/release.yml), which builds the CLI and
+crypto-helper binaries for 6 platforms, attaches them to a GitHub Release,
+publishes the SDKs, and pushes container images to GHCR:
+
+- `ghcr.io/infinio-labs/nivrit-api` — the API server
+- `ghcr.io/infinio-labs/nivrit-web` — the web dashboard (Caddy static server)
+
+Pull and run them like any other image:
+
+```bash
+docker pull ghcr.io/infinio-labs/nivrit-api:v1.0.0
+docker pull ghcr.io/infinio-labs/nivrit-web:v1.0.0
+# or just:
+docker pull ghcr.io/infinio-labs/nivrit-api:latest
+```
+
+The API image embeds the database migrations and refuses to start without
+`NIVRIT_AUTH_SECRET`, `NIVRIT_TOTP_ENCRYPTION_KEY`, and an audit-signing
+decision — see [`.env.example`](.env.example) and
+[`docker-compose.yml`](docker-compose.yml) for the full wiring.
+
+> **Making the images public.** GHCR packages default to **private**, even in
+> a public repo. After the first release, flip each package to public once
+> (GitHub → your profile/org → Packages → the package → *Package settings* →
+> *Change visibility*), or set the org's package default to public — otherwise
+> `docker pull` without authentication will 401.
+
+Versioning rules: `feat:` commits bump the minor, `fix:`/`perf:` bump the
+patch, `BREAKING CHANGE`/`!` bumps the major; `chore:`/`docs:`/`ci:` commits
+do **not** produce a release. The first release of this repo will be
+`v1.0.0`.
+
 ## Project layout
 
 **Supported surface (initial open-source release):**
