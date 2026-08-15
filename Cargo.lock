@@ -2476,7 +2476,7 @@ dependencies = [
 
 [[package]]
 name = "nivrit-api"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2511,7 +2511,7 @@ dependencies = [
 
 [[package]]
 name = "nivrit-auth"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2537,7 +2537,7 @@ dependencies = [
 
 [[package]]
 name = "nivrit-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "nivrit-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -2568,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "nivrit-crypto"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "nivrit-crypto-helper"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2606,7 +2606,7 @@ dependencies = [
 
 [[package]]
 name = "nivrit-db"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2622,7 +2622,7 @@ dependencies = [
 
 [[package]]
 name = "nivrit-sdk"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.23.1",
  "nivrit-crypto",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "nivrit-web-crypto"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.23.1",
  "console_error_panic_hook",

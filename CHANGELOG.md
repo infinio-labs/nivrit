@@ -1,3 +1,5 @@
+## 1.0.0 (2026-08-15)
+
 # Changelog
 
 All notable changes to Nivrit are documented in this file.
