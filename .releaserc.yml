@@ -1,0 +1,41 @@
+# semantic-release configuration.
+#
+# Flow: a push to main runs CI; when CI is green the Semantic Release workflow
+# runs semantic-release, which:
+#   1. analyzes conventional commits since the last tag,
+#   2. writes the new version's section into CHANGELOG.md,
+#   3. bumps the version in every published manifest (scripts/bump-versions.py),
+#   4. commits those changes and pushes the vX.Y.Z tag (message carries
+#      [skip ci] so the bump commit doesn't re-trigger CI).
+#
+# The tag push then triggers .github/workflows/release.yml, which builds the
+# CLI/helper binaries, creates the GitHub Release, publishes the SDKs, and
+# pushes the container images to GHCR. semantic-release deliberately does NOT
+# create the GitHub Release itself (no @semantic-release/github) — the
+# tag-triggered workflow owns that object so binaries attach to it exactly once.
+branches:
+  - main
+
+plugins:
+  - - "@semantic-release/commit-analyzer"
+    - preset: conventionalcommits
+  - - "@semantic-release/release-notes-generator"
+    - preset: conventionalcommits
+  - - "@semantic-release/changelog"
+    - changelogFile: CHANGELOG.md
+  - - "@semantic-release/exec"
+    - prepareCmd: "python3 scripts/bump-versions.py ${nextRelease.version}"
+  - - "@semantic-release/git"
+    - assets:
+        - CHANGELOG.md
+        - Cargo.toml
+        - Cargo.lock
+        - crates/nivrit-web/package.json
+        - sdks/node/package.json
+        - sdks/node/bun.lock
+        - sdks/python/pyproject.toml
+        - sdks/ruby/nivrit_sdk.gemspec
+        - sdks/java/pom.xml
+        - sdks/dotnet/Nivrit/Nivrit.csproj
+        - sdks/elixir/mix.exs
+      message: "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
