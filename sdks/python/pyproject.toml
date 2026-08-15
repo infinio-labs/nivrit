@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nivrit-sdk"
-version = "2.0.0"
+version = "2.1.0"
 description = "Nivrit secrets SDK for Python"
 readme = "README.md"
 requires-python = ">=3.10"

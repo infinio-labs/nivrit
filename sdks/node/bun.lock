@@ -5,11 +5,11 @@
     "": {
       "name": "@nivrit/sdk",
       "optionalDependencies": {
-        "@nivrit/helper-darwin-arm64": "2.0.0",
-        "@nivrit/helper-darwin-x64": "2.0.0",
-        "@nivrit/helper-linux-arm64": "2.0.0",
-        "@nivrit/helper-linux-x64": "2.0.0",
-        "@nivrit/helper-win32-x64": "2.0.0"
+        "@nivrit/helper-darwin-arm64": "2.1.0",
+        "@nivrit/helper-darwin-x64": "2.1.0",
+        "@nivrit/helper-linux-arm64": "2.1.0",
+        "@nivrit/helper-linux-x64": "2.1.0",
+        "@nivrit/helper-win32-x64": "2.1.0"
       }
     }
   },

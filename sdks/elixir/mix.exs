@@ -4,7 +4,7 @@ defmodule Nivrit.MixProject do
   def project do
     [
       app: :nivrit,
-      version: "2.0.0",
+      version: "2.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       description: "Nivrit SDK — post-quantum, end-to-end-encrypted secrets manager.",
