@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-nivrit-crypto = { path = "../../crates/nivrit-crypto", version = "=1.0.1" }
+nivrit-crypto = { path = "../../crates/nivrit-crypto", version = "=2.0.0" }
 reqwest = { workspace = true, features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

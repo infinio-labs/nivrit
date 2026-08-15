@@ -1,7 +1,7 @@
 {
   "name": "nivrit-web",
   "private": true,
-  "version": "1.0.1",
+  "version": "2.0.0",
   "packageManager": "bun@1.3.14",
   "type": "module",
   "scripts": {
