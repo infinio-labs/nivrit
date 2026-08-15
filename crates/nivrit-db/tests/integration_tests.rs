@@ -908,6 +908,7 @@ async fn reencrypt_secret_rewraps_in_place_without_versioning() {
     add_test_project_member_with_key(&pool, project_id, user_id).await;
     let env_id = create_test_environment(&pool, project_id).await;
 
+    let create_nonce = Uuid::new_v4().as_bytes().to_vec();
     let created = queries::create_secret(
         &pool,
         project_id,
@@ -915,7 +916,7 @@ async fn reencrypt_secret_rewraps_in_place_without_versioning() {
         None,
         "REWRAP_ME",
         b"v1-ciphertext",
-        b"v1-nonce",
+        &create_nonce,
         "aes256gcm-v1",
         1,
     )
@@ -937,6 +938,7 @@ async fn reencrypt_secret_rewraps_in_place_without_versioning() {
     // it would be after a real client-side decrypt/re-encrypt) -- what
     // matters is that the row's `version` (content-version counter) does not
     // move and no `secret_versions` history row appears.
+    let rewrap_nonce = Uuid::new_v4().as_bytes().to_vec();
     let rewrapped = queries::reencrypt_secret(
         &pool,
         project_id,
@@ -944,7 +946,7 @@ async fn reencrypt_secret_rewraps_in_place_without_versioning() {
         None,
         "REWRAP_ME",
         b"v2-ciphertext",
-        b"v2-nonce",
+        &rewrap_nonce,
         "aes256gcm-v1",
         1,
         2,
@@ -969,6 +971,7 @@ async fn reencrypt_secret_rewraps_in_place_without_versioning() {
 
     // Retrying with a stale `from_version` (already moved to 2) is a
     // conflict, not a silent no-op or clobber.
+    let conflict_nonce = Uuid::new_v4().as_bytes().to_vec();
     let conflict = queries::reencrypt_secret(
         &pool,
         project_id,
@@ -976,7 +979,7 @@ async fn reencrypt_secret_rewraps_in_place_without_versioning() {
         None,
         "REWRAP_ME",
         b"v3-ciphertext",
-        b"v3-nonce",
+        &conflict_nonce,
         "aes256gcm-v1",
         1,
         2,
