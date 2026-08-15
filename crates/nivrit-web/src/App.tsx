@@ -25,12 +25,15 @@ import {
   listOrgProjectsSession,
   loginSession,
   loginTotpSession,
+  logoutSession,
   processOAuthCallback,
   registerSession,
   resetPasswordSession,
   rotateProjectKeySession,
   setEncryptedSecret,
   setupTotpSession,
+  tryRefreshSession,
+  unlockSession,
   verifyTotpSession,
   type SecretEntry,
   type Session,
@@ -67,7 +70,7 @@ interface Environment {
   slug: string;
 }
 
-type View = 'auth' | 'mfa' | 'oauth' | 'forgot' | 'reset' | 'dashboard';
+type View = 'auth' | 'unlock' | 'mfa' | 'oauth' | 'forgot' | 'reset' | 'dashboard';
 type Tab = 'secrets' | 'members' | 'audit' | 'tokens' | 'settings';
 
 function App() {
@@ -87,15 +90,22 @@ function App() {
   // short-lived token, which has no business in the address bar or in history.
   const [mfaPending, setMfaPending] = useState(false);
 
-  const view: View = mfaPending
-    ? 'mfa'
-    : route.name === 'dashboard'
-      ? 'dashboard'
-      : route.name;
+  // Likewise, the unlock step (password re-entry after a reload with a valid
+  // refresh cookie) is transient state, not a route.
+  const [unlockPending, setUnlockPending] = useState(false);
+
+  const view: View = unlockPending
+    ? 'unlock'
+    : mfaPending
+      ? 'mfa'
+      : route.name === 'dashboard'
+        ? 'dashboard'
+        : route.name;
   const activeTab: Tab = route.name === 'dashboard' ? route.tab : 'secrets';
 
   const setView = useCallback((next: View) => {
     setMfaPending(next === 'mfa');
+    setUnlockPending(next === 'unlock');
     switch (next) {
       case 'dashboard':
         navigate({ name: 'dashboard', tab: 'secrets' });
@@ -104,7 +114,8 @@ function App() {
         navigate({ name: 'forgot' });
         break;
       case 'mfa':
-        // Stay where we are; the MFA form replaces the auth screen in place.
+      case 'unlock':
+        // Stay where we are; the form replaces the auth screen in place.
         break;
       default:
         navigate({ name: 'auth' });
@@ -121,6 +132,23 @@ function App() {
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  // Silent session renewal on load: if a refresh cookie exists, swap the
+  // sign-in screen for the password-only unlock screen. The password is still
+  // required — it alone can unwrap the private key — but the user is not made
+  // to re-authenticate from scratch. Fails silently: no cookie, expired
+  // cookie, or a network error all just leave the normal sign-in up.
+  useEffect(() => {
+    if (session || view !== 'auth') return;
+    let cancelled = false;
+    tryRefreshSession().then((ok) => {
+      if (ok && !cancelled) setView('unlock');
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, session]);
 
   // Auth form state
   const [isRegister, setIsRegister] = useState(false);
@@ -364,6 +392,12 @@ function App() {
       return await work();
     } catch (e) {
       if (e instanceof SessionExpiredError) {
+        // The access token died (1h lifetime, by design). Renew it from the
+        // refresh cookie and retry the same work once; only if renewal fails
+        // do we drop the session.
+        if (await tryRefreshSession()) {
+          return await work();
+        }
         handleSessionExpired();
         return undefined;
       }
@@ -469,10 +503,23 @@ function App() {
   }
 
   function handleLogout() {
-    clearSession();
-    setSession(null);
-    resetDashboard();
-    setView('auth');
+    // Revoke the refresh cookie server-side, then drop every key locally.
+    void logoutSession().finally(() => {
+      setSession(null);
+      resetDashboard();
+      setView('auth');
+    });
+  }
+
+  function handleUnlock(e: React.FormEvent) {
+    e.preventDefault();
+    void withBusy('Unlocking…', async () => {
+      await unlockSession(password);
+      setPassword('');
+      setSession(getSession());
+      resetDashboard();
+      setView('dashboard');
+    });
   }
 
   function resetDashboard() {
@@ -819,6 +866,7 @@ function App() {
           recoveryCodeInput={recoveryCodeInput}
           setRecoveryCodeInput={setRecoveryCodeInput}
           handleAuth={handleAuth}
+          handleUnlock={handleUnlock}
           handleMfa={handleMfa}
           handleOAuth={handleOAuth}
           handleOAuthComplete={handleOAuthComplete}

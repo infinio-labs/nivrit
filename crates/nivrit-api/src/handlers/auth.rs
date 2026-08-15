@@ -1,6 +1,7 @@
 use axum::{
     extract::{ConnectInfo, State},
-    http::HeaderMap,
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -8,10 +9,11 @@ use chrono::{Duration, Utc};
 use nivrit_auth::send_password_reset;
 use nivrit_core::NivritError;
 use nivrit_db::queries;
-use rand::TryRng;
+use rand::{Rng, TryRng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
+use uuid::Uuid;
 
 use crate::{error::ApiError, state::AppState};
 
@@ -32,6 +34,90 @@ fn default_private_key_algorithm() -> String {
 /// account-missing and credential-less (OAuth-only) paths so that response time
 /// cannot reveal whether an account exists.
 const DUMMY_CREDENTIAL: &str = "nivrit-timing-equalization-dummy-credential";
+
+// --- Refresh tokens --------------------------------------------------------
+// Long-lived, single-use-by-design session tokens delivered as an httpOnly
+// cookie at login and exchanged for short-lived access JWTs at /auth/refresh.
+// Only the SHA-256 hash is persisted. The cookie is HttpOnly + Secure +
+// SameSite=Lax: JS can't read it (XSS-safe, unlike localStorage), and Lax
+// stops cross-site POSTs from carrying it (CSRF-safe for the refresh and
+// logout endpoints, which are both POSTs).
+
+const REFRESH_COOKIE_NAME: &str = "nivrit_refresh";
+const REFRESH_RANDOM_BYTES: usize = 32;
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn generate_refresh_token() -> String {
+    let mut bytes = vec![0u8; REFRESH_RANDOM_BYTES];
+    rand::rng().fill_bytes(&mut bytes);
+    format!("nivr_{}", bytes_to_hex(&bytes))
+}
+
+/// SHA-256 hex of a refresh token — the only form ever persisted.
+fn refresh_token_hash(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    bytes_to_hex(&hasher.finalize())
+}
+
+/// Pull the refresh token out of the Cookie header, if present.
+fn extract_refresh_token(headers: &HeaderMap) -> Option<String> {
+    let cookie = headers.get(header::COOKIE)?.to_str().ok()?;
+    cookie.split(';').find_map(|part| {
+        let (name, value) = part.trim().split_once('=')?;
+        (name == REFRESH_COOKIE_NAME).then(|| value.to_string())
+    })
+}
+
+fn refresh_cookie_value(token: &str, max_age_secs: i64) -> String {
+    format!(
+        "{REFRESH_COOKIE_NAME}={token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={max_age_secs}"
+    )
+}
+
+fn clear_refresh_cookie_value() -> String {
+    format!("{REFRESH_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0")
+}
+
+fn user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+}
+
+/// Mint a refresh token, persist its hash, and return the raw value (which is
+/// sent to the client exactly once, inside the cookie).
+async fn issue_refresh_token(
+    state: &AppState,
+    user_id: Uuid,
+    headers: &HeaderMap,
+) -> Result<String, ApiError> {
+    let token = generate_refresh_token();
+    let hash = refresh_token_hash(&token);
+    let expires_at = Utc::now() + Duration::seconds(state.config.refresh_token_expiry_seconds);
+    queries::create_refresh_token(
+        &state.db,
+        user_id,
+        &hash,
+        expires_at,
+        user_agent(headers).as_deref(),
+    )
+    .await?;
+    Ok(token)
+}
+
+/// Attach a Set-Cookie header to a response.
+fn with_refresh_cookie(mut res: Response, cookie: String) -> Response {
+    res.headers_mut().insert(
+        header::SET_COOKIE,
+        cookie.parse().expect("cookie value is a valid header"),
+    );
+    res
+}
 
 /// Registration payload.
 ///
@@ -182,7 +268,7 @@ pub async fn login(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
-) -> ApiResult<Json<LoginResult>> {
+) -> ApiResult<Response> {
     // Two independent buckets. The per-IP bucket stops one host from grinding
     // through candidates. The per-email bucket is what stops a distributed
     // attack: without it, rotating source IPs gives an attacker unlimited
@@ -234,14 +320,20 @@ pub async fn login(
             .jwt
             .sign_with_mfa(row.id, row.email.clone(), true)
             .map_err(|e| NivritError::Internal(e.to_string()))?;
-        return Ok(Json(LoginResult::MfaRequired { temp_token }));
+        return Ok(Json(LoginResult::MfaRequired { temp_token }).into_response());
     }
 
     let token = state.jwt.sign(row.id, row.email.clone())?;
-    Ok(Json(LoginResult::Success(AuthResponse {
+    let refresh = issue_refresh_token(&state, row.id, &headers).await?;
+    let res = Json(LoginResult::Success(AuthResponse {
         token,
         user: user_row_to_response(&row),
-    })))
+    }))
+    .into_response();
+    Ok(with_refresh_cookie(
+        res,
+        refresh_cookie_value(&refresh, state.config.refresh_token_expiry_seconds),
+    ))
 }
 
 pub async fn login_totp(
@@ -249,7 +341,7 @@ pub async fn login_totp(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<MfaLoginRequest>,
-) -> ApiResult<Json<AuthResponse>> {
+) -> ApiResult<Response> {
     let claims = state
         .jwt
         .verify(&req.temp_token)
@@ -306,10 +398,63 @@ pub async fn login_totp(
     let _ = state.login_rate_limiter.record_success(&user_key).await;
 
     let token = state.jwt.sign(row.id, row.email.clone())?;
-    Ok(Json(AuthResponse {
+    let refresh = issue_refresh_token(&state, row.id, &headers).await?;
+    let res = Json(AuthResponse {
         token,
         user: user_row_to_response(&row),
+    })
+    .into_response();
+    Ok(with_refresh_cookie(
+        res,
+        refresh_cookie_value(&refresh, state.config.refresh_token_expiry_seconds),
+    ))
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefreshResponse {
+    pub token: String,
+    /// Access-token lifetime in seconds; the client can pre-emptively refresh.
+    pub expires_in: i64,
+}
+
+/// POST /auth/refresh — exchange the httpOnly refresh cookie for a fresh
+/// access JWT. Missing, revoked, and expired cookies all answer 401
+/// identically so a stolen cookie can't be probed via error codes.
+pub async fn refresh(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> ApiResult<Json<RefreshResponse>> {
+    let Some(token) = extract_refresh_token(&headers) else {
+        return Err(NivritError::Unauthorized.into());
+    };
+    let hash = refresh_token_hash(&token);
+    let row = queries::get_refresh_token_by_hash(&state.db, &hash)
+        .await
+        .map_err(|_| NivritError::Unauthorized)?;
+    if row.revoked_at.is_some() || row.expires_at <= Utc::now() {
+        return Err(NivritError::Unauthorized.into());
+    }
+    queries::touch_refresh_token(&state.db, &hash).await?;
+    let user = queries::get_user_by_id(&state.db, row.user_id).await?;
+    let token = state.jwt.sign(user.id, user.email)?;
+    Ok(Json(RefreshResponse {
+        token,
+        expires_in: state.config.token_expiry_seconds,
     }))
+}
+
+/// POST /auth/logout — revoke the refresh token and clear the cookie.
+/// Idempotent: logging out without a cookie, or twice, still succeeds, so
+/// logout cannot be used to probe token validity.
+pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Response> {
+    if let Some(token) = extract_refresh_token(&headers) {
+        let _ = queries::revoke_refresh_token(&state.db, &refresh_token_hash(&token)).await;
+    }
+    let res = Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(axum::body::Body::empty())
+        .expect("static response is valid");
+    Ok(with_refresh_cookie(res, clear_refresh_cookie_value()))
 }
 
 // ---------------------------------------------------------------------------

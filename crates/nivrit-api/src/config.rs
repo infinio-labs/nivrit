@@ -22,6 +22,11 @@ pub struct Config {
     pub auth_secret: String,
     #[serde(default = "default_token_expiry")]
     pub token_expiry_seconds: i64,
+    /// Lifetime of the refresh-token cookie issued at login (seconds). The
+    /// cookie is httpOnly and exchanged for a fresh access JWT at
+    /// `/auth/refresh`, so this is the real session lifetime.
+    #[serde(default = "default_refresh_token_expiry")]
+    pub refresh_token_expiry_seconds: i64,
     /// Path to the TLS certificate chain (PEM). If omitted, the server runs plain HTTP.
     pub tls_cert_path: Option<String>,
     /// Path to the TLS private key (PEM). Required when `tls_cert_path` is set.
@@ -145,6 +150,10 @@ fn default_token_expiry() -> i64 {
     3600
 }
 
+fn default_refresh_token_expiry() -> i64 {
+    2_592_000 // 30 days
+}
+
 fn default_oauth_redirect_url() -> String {
     "http://localhost:8080/oauth/callback".into()
 }
@@ -172,6 +181,7 @@ mod tests {
             log_format: "pretty".into(),
             auth_secret: "x".repeat(32),
             token_expiry_seconds: 3600,
+            refresh_token_expiry_seconds: 2_592_000,
             tls_cert_path: None,
             tls_key_path: None,
             cors_origin: None,

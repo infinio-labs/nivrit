@@ -73,6 +73,8 @@ export async function login(email: string, authHash: string): Promise<LoginResul
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, auth_hash: authHash }),
+    // Accept the Set-Cookie that carries the httpOnly refresh token.
+    credentials: 'include',
   });
   if (!res.ok) throw await failure(res, 'login failed');
   return res.json();
@@ -83,6 +85,7 @@ export async function loginTotp(tempToken: string, code: string): Promise<LoginR
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ temp_token: tempToken, code }),
+    credentials: 'include',
   });
   if (!res.ok) throw await failure(res, 'TOTP login failed');
   return res.json();
@@ -93,8 +96,39 @@ export async function register(body: RegisterRequest): Promise<RegisterResponse>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    credentials: 'include',
   });
   if (!res.ok) throw await failure(res, 'registration failed');
+  return res.json();
+}
+
+/** Exchange the httpOnly refresh cookie for a fresh access JWT. */
+export async function refreshSession(): Promise<{ token: string; expires_in: number }> {
+  const res = await fetch(`${API_URL}/auth/refresh`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  if (!res.ok) throw await failure(res, 'session refresh failed');
+  return res.json();
+}
+
+/** Revoke the refresh cookie server-side. Best-effort: a network failure must
+ * not block signing out locally, and the endpoint is idempotent. */
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' });
+  } catch {
+    // Ignore — local state is cleared by the caller regardless.
+  }
+}
+
+/** The current user's profile, including the encrypted private key blob, for
+ * rebuilding a session after a silent refresh (unlock flow). */
+export async function getMe(token: string): Promise<LoginResponse['user']> {
+  const res = await fetch(`${API_URL}/users/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await failure(res, 'failed to load profile');
   return res.json();
 }
 

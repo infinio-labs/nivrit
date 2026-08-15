@@ -44,9 +44,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - uses: taiki-e/install-action@065d6a08a14e61e89fb0a4c10eecdbdef39c7d8e # v2
-        with:
-          tool: sqlx-cli@0.9.0
+      # install-action doesn't know sqlx-cli@0.9.0 and its cargo-binstall
+      # fallback breaks on current runner images ("this action requires
+      # bash"). cargo install from crates.io is reliable and the compiled
+      # binary is reused across runs via the rust-cache target dir.
+      - run: cargo install sqlx-cli --locked --version 0.9.0 --no-default-features --features postgres
 
       - name: Run migrations
         run: sqlx migrate run --source crates/nivrit-db/migrations
@@ -94,7 +96,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: 1.97.1
-      - uses: taiki-e/install-action@065d6a08a14e61e89fb0a4c10eecdbdef39c7d8e # v2
+      - uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
         with:
           tool: cargo-audit@0.22.2
       - run: cargo audit

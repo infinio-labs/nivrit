@@ -1,10 +1,11 @@
-import { KeyRound, Mail, Shield } from './icons';
+import { KeyRound, Loader2, Lock, Mail, Shield } from './icons';
 import { Button, Card, Input, Label } from './ui';
 import { AuthLayout } from './AuthLayout';
 import { AuthScreen } from './AuthScreen';
+import { clearPendingToken } from '../session';
 
 /** Which pre-dashboard screen is showing. */
-export type AuthView = 'auth' | 'mfa' | 'oauth' | 'forgot' | 'reset';
+export type AuthView = 'auth' | 'unlock' | 'mfa' | 'oauth' | 'forgot' | 'reset';
 
 interface AuthViewsProps {
   view: AuthView;
@@ -23,6 +24,7 @@ interface AuthViewsProps {
   recoveryCodeInput: string;
   setRecoveryCodeInput: (v: string) => void;
   handleAuth: (e: React.FormEvent) => void;
+  handleUnlock: (e: React.FormEvent) => void;
   handleMfa: (e: React.FormEvent) => void;
   handleOAuth: (provider: 'google' | 'github') => void;
   handleOAuthComplete: (e: React.FormEvent) => void;
@@ -56,6 +58,7 @@ export function AuthViews({
   recoveryCodeInput,
   setRecoveryCodeInput,
   handleAuth,
+  handleUnlock,
   handleMfa,
   handleOAuth,
   handleOAuthComplete,
@@ -81,6 +84,63 @@ export function AuthViews({
             onForgot={() => setView('forgot')}
             busy={busy}
           />
+        </AuthLayout>
+      )}
+
+      {view === 'unlock' && (
+        <AuthLayout>
+          <Card className="w-full max-w-sm p-8 shadow-lg">
+            <div className="mb-6 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/30">
+                <Lock size={24} />
+              </div>
+              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
+                Unlock your vault
+              </h1>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Your session is still active — enter your master password to
+                decrypt your keys.
+              </p>
+            </div>
+            <form onSubmit={handleUnlock} className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Master password
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoFocus
+                  disabled={!!busy}
+                  placeholder="••••••••••••"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                />
+              </div>
+              <Button type="submit" className="w-full" disabled={!!busy}>
+                {busy ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="animate-spin" size={16} />
+                    {busy}
+                  </span>
+                ) : (
+                  'Unlock'
+                )}
+              </Button>
+            </form>
+            <div className="mt-4 text-center text-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  clearPendingToken();
+                  setView('auth');
+                }}
+                className="text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline dark:text-slate-400 dark:hover:text-slate-200"
+              >
+                Sign in as a different user
+              </button>
+            </div>
+          </Card>
         </AuthLayout>
       )}
 
