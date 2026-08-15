@@ -8,7 +8,11 @@ services:
       POSTGRES_PASSWORD: nivrit
       POSTGRES_DB: nivrit
     volumes:
-      - nivrit-postgres-data:/var/lib/postgresql/data
+      # postgres:18+ images moved to a single mount at /var/lib/postgresql with
+      # major-version-specific subdirectories (pg_ctlcluster layout). Mounting
+      # the old /var/lib/postgresql/data path makes the entrypoint refuse to
+      # start even on a fresh volume.
+      - nivrit-postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nivrit -d nivrit"]
       interval: 5s
