@@ -29,7 +29,7 @@ RUN mkdir -p dist/assets/wasm/pkg && cp -r src/wasm/pkg/* dist/assets/wasm/pkg/
 # runs on `distroless/static`, not just `distroless/cc`: no libc needed at
 # all, just the binary and the CA cert bundle distroless/static already ships.
 # -----------------------------------------------------------------------------
-FROM caddy:2.11-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648 AS caddy-bin
+FROM caddy:2.11-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b AS caddy-bin
 
 # -----------------------------------------------------------------------------
 # Runtime stage: serve static files and reverse-proxy /api with Caddy instead
