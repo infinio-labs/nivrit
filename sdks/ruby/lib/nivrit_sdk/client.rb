@@ -15,7 +15,7 @@ module NivritSdk
       req['Authorization'] = "Bearer #{@token}"
       req['Content-Type'] = 'application/json'
       req.body = body.to_json if body
-      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
+      res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https', open_timeout: 30, read_timeout: 30) do |http|
         http.request(req)
       end
       unless res.is_a?(Net::HTTPSuccess)

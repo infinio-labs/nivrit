@@ -1,6 +1,6 @@
 class NivritClient {
   constructor(baseUrl, token) {
-    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.token = token;
   }
 
@@ -11,7 +11,7 @@ class NivritClient {
       'Content-Type': 'application/json',
       ...init.headers,
     };
-    const res = await fetch(url, { ...init, headers });
+    const res = await fetch(url, { signal: init.signal ?? AbortSignal.timeout(30000), ...init, headers });
     const text = await res.text();
     if (!res.ok) throw new Error(`Nivrit API error ${res.status}: ${text}`);
     return text ? JSON.parse(text) : undefined;

@@ -9,7 +9,7 @@ use chrono::{Duration, Utc};
 use nivrit_auth::send_password_reset;
 use nivrit_core::NivritError;
 use nivrit_db::queries;
-use rand::{Rng, TryRng};
+use rand::TryRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
@@ -36,58 +36,12 @@ fn default_private_key_algorithm() -> String {
 const DUMMY_CREDENTIAL: &str = "nivrit-timing-equalization-dummy-credential";
 
 // --- Refresh tokens --------------------------------------------------------
-// Long-lived, single-use-by-design session tokens delivered as an httpOnly
+// Long-lived session tokens delivered as an httpOnly
 // cookie at login and exchanged for short-lived access JWTs at /auth/refresh.
 // Only the SHA-256 hash is persisted. The cookie is HttpOnly + Secure +
 // SameSite=Lax: JS can't read it (XSS-safe, unlike localStorage), and Lax
 // stops cross-site POSTs from carrying it (CSRF-safe for the refresh and
 // logout endpoints, which are both POSTs).
-
-const REFRESH_COOKIE_NAME: &str = "nivrit_refresh";
-const REFRESH_RANDOM_BYTES: usize = 32;
-
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn generate_refresh_token() -> String {
-    let mut bytes = vec![0u8; REFRESH_RANDOM_BYTES];
-    rand::rng().fill_bytes(&mut bytes);
-    format!("nivr_{}", bytes_to_hex(&bytes))
-}
-
-/// SHA-256 hex of a refresh token — the only form ever persisted.
-fn refresh_token_hash(token: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    bytes_to_hex(&hasher.finalize())
-}
-
-/// Pull the refresh token out of the Cookie header, if present.
-fn extract_refresh_token(headers: &HeaderMap) -> Option<String> {
-    let cookie = headers.get(header::COOKIE)?.to_str().ok()?;
-    cookie.split(';').find_map(|part| {
-        let (name, value) = part.trim().split_once('=')?;
-        (name == REFRESH_COOKIE_NAME).then(|| value.to_string())
-    })
-}
-
-fn refresh_cookie_value(token: &str, max_age_secs: i64) -> String {
-    format!(
-        "{REFRESH_COOKIE_NAME}={token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={max_age_secs}"
-    )
-}
-
-fn clear_refresh_cookie_value() -> String {
-    format!("{REFRESH_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0")
-}
-
-fn user_agent(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get(header::USER_AGENT)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string)
-}
 
 /// Mint a refresh token, persist its hash, and return the raw value (which is
 /// sent to the client exactly once, inside the cookie).
@@ -96,15 +50,15 @@ async fn issue_refresh_token(
     user_id: Uuid,
     headers: &HeaderMap,
 ) -> Result<String, ApiError> {
-    let token = generate_refresh_token();
-    let hash = refresh_token_hash(&token);
+    let token = crate::auth_session::generate_token();
+    let hash = crate::auth_session::hash(&token);
     let expires_at = Utc::now() + Duration::seconds(state.config.refresh_token_expiry_seconds);
     queries::create_refresh_token(
         &state.db,
         user_id,
         &hash,
         expires_at,
-        user_agent(headers).as_deref(),
+        crate::auth_session::user_agent(headers).as_deref(),
     )
     .await?;
     Ok(token)
@@ -205,7 +159,7 @@ pub async fn register(
     // Registration is unauthenticated and each call costs a 64 MiB Argon2id
     // hash, so it is throttled per source IP like login is. Without this an
     // anonymous caller can exhaust server memory with a loop.
-    let rate_key = format!("register|{}", client_ip(&state, &headers, &addr));
+    let rate_key = format!("register|{}", state.client_ip(&headers, &addr));
     if !state.login_rate_limiter.allow(&rate_key).await? {
         return Err(NivritError::Forbidden.into());
     }
@@ -273,7 +227,7 @@ pub async fn login(
     // through candidates. The per-email bucket is what stops a distributed
     // attack: without it, rotating source IPs gives an attacker unlimited
     // guesses against a single account, because every new IP is a fresh key.
-    let ip = client_ip(&state, &headers, &addr);
+    let ip = state.client_ip(&headers, &addr);
     let ip_key = format!("login-ip|{ip}");
     let email_key = format!("login-email|{}", req.email.trim().to_lowercase());
     if !state.login_rate_limiter_ip.allow(&ip_key).await?
@@ -332,7 +286,7 @@ pub async fn login(
     .into_response();
     Ok(with_refresh_cookie(
         res,
-        refresh_cookie_value(&refresh, state.config.refresh_token_expiry_seconds),
+        crate::auth_session::cookie(&refresh, state.config.refresh_token_expiry_seconds),
     ))
 }
 
@@ -355,7 +309,7 @@ pub async fn login_totp(
     // second factor to a guessing game. Two buckets for the same reason as
     // `login`: per-IP stops one host grinding, per-account stops a distributed
     // attack from rotating IPs around the account bucket.
-    let ip_key = format!("totp-login-ip|{}", client_ip(&state, &headers, &addr));
+    let ip_key = format!("totp-login-ip|{}", state.client_ip(&headers, &addr));
     let user_key = format!("totp-login-user|{}", claims.sub);
     if !state.login_rate_limiter_ip.allow(&ip_key).await?
         || !state.login_rate_limiter.allow(&user_key).await?
@@ -406,7 +360,7 @@ pub async fn login_totp(
     .into_response();
     Ok(with_refresh_cookie(
         res,
-        refresh_cookie_value(&refresh, state.config.refresh_token_expiry_seconds),
+        crate::auth_session::cookie(&refresh, state.config.refresh_token_expiry_seconds),
     ))
 }
 
@@ -424,10 +378,10 @@ pub async fn refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Json<RefreshResponse>> {
-    let Some(token) = extract_refresh_token(&headers) else {
+    let Some(token) = crate::auth_session::extract(&headers) else {
         return Err(NivritError::Unauthorized.into());
     };
-    let hash = refresh_token_hash(&token);
+    let hash = crate::auth_session::hash(&token);
     let row = queries::get_refresh_token_by_hash(&state.db, &hash)
         .await
         .map_err(|_| NivritError::Unauthorized)?;
@@ -447,14 +401,17 @@ pub async fn refresh(
 /// Idempotent: logging out without a cookie, or twice, still succeeds, so
 /// logout cannot be used to probe token validity.
 pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Response> {
-    if let Some(token) = extract_refresh_token(&headers) {
-        let _ = queries::revoke_refresh_token(&state.db, &refresh_token_hash(&token)).await;
+    if let Some(token) = crate::auth_session::extract(&headers) {
+        let _ = queries::revoke_refresh_token(&state.db, &crate::auth_session::hash(&token)).await;
     }
     let res = Response::builder()
         .status(StatusCode::NO_CONTENT)
         .body(axum::body::Body::empty())
         .expect("static response is valid");
-    Ok(with_refresh_cookie(res, clear_refresh_cookie_value()))
+    Ok(with_refresh_cookie(
+        res,
+        crate::auth_session::clear_cookie(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -711,7 +668,7 @@ pub async fn forgot_password(
     // an unbounded way to grow password_reset_tokens. Rate-limited requests get
     // the same response as everything else here: this endpoint's whole design
     // is that its response never varies with anything an attacker controls.
-    let ip_key = format!("forgot-password-ip|{}", client_ip(&state, &headers, &addr));
+    let ip_key = format!("forgot-password-ip|{}", state.client_ip(&headers, &addr));
     let email_key = format!("forgot-password-email|{}", req.email.trim().to_lowercase());
     if state.login_rate_limiter_ip.allow(&ip_key).await?
         && state.login_rate_limiter.allow(&email_key).await?
@@ -809,7 +766,7 @@ pub async fn reset_password_begin(
 ) -> ApiResult<Json<ResetPasswordBeginResponse>> {
     // Guessing the recovery credential is the only way past this endpoint, so
     // throttle it the same way login is throttled.
-    let rate_key = format!("reset|{}", client_ip(&state, &headers, &addr));
+    let rate_key = format!("reset|{}", state.client_ip(&headers, &addr));
     if !state.login_rate_limiter.allow(&rate_key).await? {
         return Err(NivritError::Forbidden.into());
     }
@@ -846,7 +803,7 @@ pub async fn reset_password(
     headers: HeaderMap,
     Json(req): Json<ResetPasswordRequest>,
 ) -> ApiResult<Json<AuthResponse>> {
-    let rate_key = format!("reset|{}", client_ip(&state, &headers, &addr));
+    let rate_key = format!("reset|{}", state.client_ip(&headers, &addr));
     if !state.login_rate_limiter.allow(&rate_key).await? {
         return Err(NivritError::Forbidden.into());
     }
@@ -895,6 +852,9 @@ pub async fn reset_password(
     .await?;
 
     queries::mark_password_reset_token_used(&state.db, token_id).await?;
+    // A reset usually follows a suspected compromise: kill every existing
+    // session and PAT so a stolen cookie or token doesn't outlive the reset.
+    queries::revoke_all_user_sessions(&state.db, user.id).await?;
 
     let token = state.jwt.sign(user.id, user.email.clone())?;
     Ok(Json(AuthResponse {
@@ -1091,30 +1051,6 @@ fn decode_credential(input: &str, field: &str) -> ApiResult<String> {
     // Re-encode canonically so that two encodings of the same bytes cannot
     // produce two different stored hashes.
     Ok(STANDARD.encode(&bytes))
-}
-
-/// Resolve the client address for rate limiting.
-///
-/// When the API sits behind the bundled nginx (or any reverse proxy) the socket
-/// peer is the proxy, which would collapse every user into a single rate-limit
-/// bucket. `NIVRIT_TRUSTED_PROXY` opts into reading the last hop from
-/// `X-Forwarded-For` instead. It is off by default: trusting that header from an
-/// arbitrary client would let anyone forge their way around the limiter.
-fn client_ip(state: &AppState, headers: &HeaderMap, addr: &SocketAddr) -> String {
-    if state.config.trusted_proxy {
-        // Take the last entry: earlier ones are client-supplied and forgeable,
-        // the final hop is the one our own proxy appended.
-        if let Some(last) = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.rsplit(',').next())
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        {
-            return last.to_string();
-        }
-    }
-    addr.ip().to_string()
 }
 
 fn generate_secure_token() -> String {

@@ -1,7 +1,11 @@
 # Production-oriented sample compose.
 # 1. Copy .env.example to .env and fill in real secrets.
-# 2. Set NIVRIT_VERSION to a released tag (for example, v0.1.0).
+# 2. For released images, set NIVRIT_VERSION to the image version (for example,
+#    2.1.0). For a source deployment, omit it and run with --build.
 # 3. Run: docker compose -f deploy/docker-compose.yml --env-file .env up -d
+#    or: docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+# For a public hostname, set NIVRIT_DEPLOY_CORS_ORIGIN to that exact https URL.
+# Generate and set NIVRIT_SIGNING_KEY_SEED in .env (openssl rand -base64 32).
 
 services:
   postgres:
@@ -20,14 +24,30 @@ services:
       retries: 5
 
   api:
-    image: "ghcr.io/infinio-labs/nivrit-api:${NIVRIT_VERSION:?NIVRIT_VERSION required}"
+    image: "ghcr.io/infinio-labs/nivrit-api:${NIVRIT_VERSION:-local}"
+    build:
+      context: ..
+      dockerfile: Dockerfile.api
     restart: unless-stopped
     env_file:
-      - .env
+      # The documented command loads the repository-root .env.
+      - ${NIVRIT_ENV_FILE:-../.env}
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-nivrit}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-nivrit}
+      # The root development default is loopback-only; containers need the
+      # service interface so Caddy can reach the API over Docker networking.
+      NIVRIT_HOST: 0.0.0.0
+      # Caddy fronts the API; without this every client shares the proxy IP in
+      # the rate limiter and audit log.
+      NIVRIT_TRUSTED_PROXY: "true"
+      NIVRIT_CORS_ORIGIN: ${NIVRIT_DEPLOY_CORS_ORIGIN:-http://localhost:8080}
+      # Production defaults to signed audit logs. Set the opt-out explicitly
+      # only for a disposable evaluation deployment.
+      NIVRIT_AUDIT_SIGNING_DISABLED: ${NIVRIT_DEPLOY_AUDIT_SIGNING_DISABLED:-false}
     ports:
-      - "4000:4000"
+      # Keep the API off the public interface; expose it through the web
+      # proxy or an explicitly configured private network.
+      - "127.0.0.1:${NIVRIT_API_HOST_PORT:-4000}:4000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,10 +59,15 @@ services:
       retries: 10
 
   web:
-    image: "ghcr.io/infinio-labs/nivrit-web:${NIVRIT_VERSION:?NIVRIT_VERSION required}"
+    image: "ghcr.io/infinio-labs/nivrit-web:${NIVRIT_VERSION:-local}"
+    build:
+      context: ..
+      dockerfile: Dockerfile.web
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # Put TLS termination in front of this loopback-only listener for
+      # internet use (Caddy's container listener is HTTP on the host side).
+      - "127.0.0.1:${NIVRIT_WEB_HOST_PORT:-8080}:8080"
     depends_on:
       api:
         condition: service_healthy

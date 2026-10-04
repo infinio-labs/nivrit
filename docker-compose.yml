@@ -7,6 +7,11 @@ services:
       POSTGRES_USER: nivrit
       POSTGRES_PASSWORD: nivrit
       POSTGRES_DB: nivrit
+    # Host-side integration tests use DATABASE_URL=localhost:15432. Override
+    # NIVRIT_POSTGRES_HOST_PORT when needed. Bind only to loopback; Postgres
+    # must not be exposed beyond the developer machine.
+    ports:
+      - "127.0.0.1:${NIVRIT_POSTGRES_HOST_PORT:-15432}:5432"
     volumes:
       # postgres:18+ images moved to a single mount at /var/lib/postgresql with
       # major-version-specific subdirectories (pg_ctlcluster layout). Mounting

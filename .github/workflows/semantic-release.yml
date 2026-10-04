@@ -46,6 +46,11 @@ jobs:
       - name: Install release tooling
         run: npm ci
       - name: Run semantic-release
-        run: npx semantic-release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          test -n "$RELEASE_TOKEN" || {
+            echo "::error::Configure RELEASE_TOKEN as a narrowly scoped release bot token that can bypass the protected main branch."
+            exit 1
+          }
+          GITHUB_TOKEN="$RELEASE_TOKEN" npx semantic-release

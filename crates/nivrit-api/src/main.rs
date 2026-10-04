@@ -1,4 +1,5 @@
 mod auth;
+mod auth_session;
 mod config;
 mod error;
 mod handlers;

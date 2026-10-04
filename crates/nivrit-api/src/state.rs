@@ -1,5 +1,7 @@
+use axum::http::HeaderMap;
 use nivrit_auth::{CredentialHasher, EmailConfig, JwtConfig};
 use nivrit_db::DbPool;
+use std::net::SocketAddr;
 
 use crate::{config::Config, rate_limit::LoginRateLimiter, signing::SignatureService};
 
@@ -39,6 +41,30 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Resolve the client address for rate limiting.
+    ///
+    /// When the API sits behind the bundled nginx (or any reverse proxy) the socket
+    /// peer is the proxy, which would collapse every user into a single rate-limit
+    /// bucket. `NIVRIT_TRUSTED_PROXY` opts into reading the last hop from
+    /// `X-Forwarded-For` instead. It is off by default: trusting that header from an
+    /// arbitrary client would let anyone forge their way around the limiter.
+    pub fn client_ip(&self, headers: &HeaderMap, addr: &SocketAddr) -> String {
+        if self.config.trusted_proxy {
+            // Take the last entry: earlier ones are client-supplied and forgeable,
+            // the final hop is the one our own proxy appended.
+            if let Some(last) = headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.rsplit(',').next())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+            {
+                return last.to_string();
+            }
+        }
+        addr.ip().to_string()
+    }
+
     pub async fn from_config(config: &Config) -> anyhow::Result<Self> {
         let db = DbPool::connect(&config.database_url).await?;
         // Config::validate() already requires either a seed or an explicit

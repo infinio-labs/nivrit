@@ -18,7 +18,8 @@ defmodule Nivrit.Client do
     json = if body, do: Jason.encode!(body), else: ""
     method_atom = String.to_atom(String.downcase(to_string(method)))
     req = {url, headers, ~c"application/json", json}
-    {:ok, {{_, status, _}, _resp_headers, resp_body}} = :httpc.request(method_atom, req, [], [])
+    {:ok, {{_, status, _}, _resp_headers, resp_body}} =
+      :httpc.request(method_atom, req, [timeout: 30_000, connect_timeout: 30_000], [])
     body_str = List.to_string(resp_body)
 
     unless status >= 200 and status < 300 do

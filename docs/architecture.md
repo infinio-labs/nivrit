@@ -121,8 +121,9 @@ which is what lets an account created in the browser log in from the CLI.
   cannot reach any project key or secret value.
 - Network eavesdropper: all traffic is HTTPS; even if intercepted, ciphertext is useless without keys.
 - **Store-now-decrypt-later (harvesting) attacks:** the hybrid **X25519 + ML-KEM-768**
-  key exchange means intercepted ciphertext cannot be broken by a future quantum computer,
-  because the ML-KEM-768 (Kyber) portion is lattice-based and quantum-resistant.
+  key exchange is designed to mitigate this risk under the documented algorithm,
+  implementation, and endpoint assumptions. It is not a guarantee of
+  “quantum-proof” software; the crypto dependencies remain pre-1.0 and unaudited.
 - **Audit-log forgery, deletion, and reordering:** every audit-log entry is signed with
   **ML-DSA-65** (Dilithium) over a payload that includes a hash of the previous entry in
   its project's chain, so operators can verify not just that a given entry's content is

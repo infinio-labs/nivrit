@@ -10,11 +10,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 public class NivritClient {
     private final String baseUrl;
     private final String token;
-    private final HttpClient http = HttpClient.newHttpClient();
+    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
     private final ObjectMapper mapper = new ObjectMapper();
 
     public NivritClient(String baseUrl, String token) {
@@ -33,7 +34,7 @@ public class NivritClient {
         } else {
             builder.GET();
         }
-        HttpResponse<String> resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> resp = http.send(builder.timeout(Duration.ofSeconds(30)).build(), HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             throw new IOException("Nivrit API error " + resp.statusCode() + ": " + resp.body());
         }

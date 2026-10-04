@@ -1,6 +1,14 @@
 import json
+import urllib.error
 import urllib.request
 from typing import Any
+
+
+class NivritApiError(RuntimeError):
+    def __init__(self, status: int, body: str):
+        super().__init__(f"Nivrit API error {status}: {body}")
+        self.status = status
+        self.body = body
 
 
 class NivritClient:
@@ -16,11 +24,14 @@ class NivritClient:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
         }
-        data = json.dumps(body).encode() if body else None
+        data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            text = resp.read().decode()
-            return json.loads(text) if text else None
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                text = resp.read().decode()
+        except urllib.error.HTTPError as error:
+            raise NivritApiError(error.code, error.read().decode()) from error
+        return json.loads(text) if text else None
 
     def get_me(self) -> dict[str, Any]:
         return self._request("GET", "/users/me")

@@ -238,7 +238,7 @@ pub async fn create_secret(
         user.id,
         "write",
         &req.key,
-        &addr.ip().to_string(),
+        &state.client_ip(&headers, &addr),
         user_agent,
         created_at,
     )
@@ -326,7 +326,7 @@ pub async fn list_secrets(
         user.id,
         "read",
         "*",
-        &addr.ip().to_string(),
+        &state.client_ip(&headers, &addr),
         user_agent,
         created_at,
     )
@@ -388,7 +388,7 @@ pub async fn delete_secret(
         user.id,
         "delete",
         &key,
-        &addr.ip().to_string(),
+        &state.client_ip(&headers, &addr),
         user_agent,
         created_at,
     )
@@ -497,7 +497,7 @@ pub async fn restore_secret(
         user.id,
         "write",
         &key,
-        &addr.ip().to_string(),
+        &state.client_ip(&headers, &addr),
         user_agent,
         created_at,
     )
@@ -584,7 +584,7 @@ pub async fn reencrypt_secret(
         user.id,
         "reencrypt",
         &key,
-        &addr.ip().to_string(),
+        &state.client_ip(&headers, &addr),
         user_agent,
         created_at,
     )
@@ -640,7 +640,7 @@ pub async fn get_secret(
         user.id,
         "read",
         &key,
-        &addr.ip().to_string(),
+        &state.client_ip(&headers, &addr),
         user_agent,
         created_at,
     )

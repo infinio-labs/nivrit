@@ -2232,6 +2232,24 @@ pub async fn revoke_refresh_token(pool: &DbPool, token_hash: &str) -> Result<()>
     Ok(())
 }
 
+/// Revoke every refresh token and PAT a user holds (password reset).
+pub async fn revoke_all_user_sessions(pool: &DbPool, user_id: Uuid) -> Result<()> {
+    let mut tx = pool.inner().begin().await.map_err(map_db_error)?;
+    sqlx::query(
+        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(map_db_error)?;
+    sqlx::query("UPDATE personal_access_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+    tx.commit().await.map_err(map_db_error)
+}
+
 fn role_as_str(role: Role) -> &'static str {
     match role {
         Role::Admin => "admin",

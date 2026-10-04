@@ -1,6 +1,7 @@
 # Security Policy
 
-Nivrit is a post-quantum, end-to-end-encrypted secrets manager. We take
+Nivrit is a client-side encrypted secrets manager with a documented hybrid
+post-quantum design. We take
 vulnerabilities seriously and appreciate responsible disclosure.
 
 ## Reporting a Vulnerability

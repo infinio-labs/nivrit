@@ -44,6 +44,11 @@ Run the Rust unit and integration tests (requires the running Postgres container
 cargo test --locked --workspace --exclude nivrit-web-crypto --exclude nivrit-sdk
 ```
 
+The development Compose file binds Postgres to `127.0.0.1:15432` by default,
+so set `DATABASE_URL=postgres://nivrit:nivrit@127.0.0.1:15432/nivrit` when
+running those tests from the host. Override `NIVRIT_POSTGRES_HOST_PORT` if that
+port is already in use.
+
 For the web frontend:
 
 ```bash
@@ -124,6 +129,17 @@ If you add a build-time dependency that embeds a timestamp, an absolute path, or
 a random seed, that check will start failing. Please fix the source of the
 nondeterminism rather than dropping the check — the published checksums are what
 lets a user confirm a deployment is serving the code in this repository.
+
+Release consumers can verify binary integrity and provenance after downloading
+assets from GitHub:
+
+```bash
+sha256sum --check SHA256SUMS
+gh attestation verify niv-linux-x86_64 --repo infinio-labs/nivrit
+```
+
+The release also attaches `SBOM.cdx.json`. Checksums and attestations prove
+which artifact was built and published; they do not constitute a security audit.
 
 ## Architecture decisions
 

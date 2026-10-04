@@ -1,0 +1,9 @@
+{
+  "contract": "sdks/protocol.md",
+  "cases": [
+    {"name": "get_json", "method": "GET", "path": "/users/me", "status": 200, "body": "{\"id\":\"u1\"}"},
+    {"name": "post_json", "method": "POST", "path": "/projects", "status": 201, "body": "{\"name\":\"demo\"}"},
+    {"name": "empty_success", "method": "DELETE", "path": "/projects/p1", "status": 204, "body": ""},
+    {"name": "api_error", "method": "GET", "path": "/users/me", "status": 401, "body": "unauthorized"}
+  ]
+}

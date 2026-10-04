@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // NivritClient is a thin HTTP client for the Nivrit API.
@@ -21,7 +22,7 @@ func NewClient(baseURL, token string) *NivritClient {
 	return &NivritClient{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Token:   token,
-		client:  &http.Client{Timeout: 0},
+		client:  &http.Client{Timeout: 30 * time.Second},
 	}
 }
 

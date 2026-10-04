@@ -16,13 +16,13 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE="docker compose --env-file ${ROOT_DIR}/.env.docker -f ${ROOT_DIR}/docker-compose.yml"
 API_BASE="http://localhost:4000"
 
-ALICE_HOME="/tmp/nivrit-e2e-alice"
-BOB_HOME="/tmp/nivrit-e2e-bob"
 ALICE_PASSWORD="alice-glacier-tuesday-vault"
 BOB_PASSWORD="bob-harbour-lantern-vault"
 
 # Use unique identifiers so the script can be re-run against the same database.
 SUFFIX="$(date +%s)"
+ALICE_HOME="/tmp/nivrit-e2e-alice-${SUFFIX}"
+BOB_HOME="/tmp/nivrit-e2e-bob-${SUFFIX}"
 ALICE_EMAIL="alice-${SUFFIX}@example.com"
 BOB_EMAIL="bob-${SUFFIX}@example.com"
 ORG_NAME="AliceOrg"
@@ -35,9 +35,24 @@ ENV_SLUG="prod-${SUFFIX}"
 info() { echo "===> $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# Run the Nivrit CLI inside the API container with a custom HOME so each user
-# gets an isolated config file.
-# Runs the CLI inside the api container.
+cleanup() {
+  ${COMPOSE} down --remove-orphans >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+[[ -f "${ROOT_DIR}/.env.docker" ]] || fail "missing .env.docker; copy .env.docker.example and fill required values"
+grep -Eq '^NIVRIT_AUTH_SECRET=.{32,}$' "${ROOT_DIR}/.env.docker" \
+  || fail "NIVRIT_AUTH_SECRET must be set to at least 32 bytes in .env.docker"
+grep -Eq '^NIVRIT_TOTP_ENCRYPTION_KEY=.+$' "${ROOT_DIR}/.env.docker" \
+  || fail "NIVRIT_TOTP_ENCRYPTION_KEY must be set in .env.docker"
+if ! grep -Eq '^NIVRIT_SIGNING_KEY_SEED=.+$' "${ROOT_DIR}/.env.docker" \
+  && ! grep -Eq '^NIVRIT_AUDIT_SIGNING_DISABLED=true$' "${ROOT_DIR}/.env.docker"; then
+  fail "set NIVRIT_SIGNING_KEY_SEED or explicitly set NIVRIT_AUDIT_SIGNING_DISABLED=true"
+fi
+
+# Run the CLI on the host against the Dockerized API with a custom HOME so each
+# user gets an isolated config file. The API image is intentionally distroless
+# and contains neither the CLI nor shell utilities.
 #
 # The master password goes in via NIVRIT_PASSWORD rather than --password: the
 # flag still works but warns, because a secret in argv lands in shell history
@@ -45,15 +60,20 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 run_cli() {
   local home_dir="$1"
   shift
-  ${COMPOSE} exec -T -e "HOME=${home_dir}" -e "NIVRIT_PASSWORD=${NIV_PASSWORD:-}" api nivrit "$@"
+  local cli_bin="${ROOT_DIR}/target/debug/niv"
+  if [[ ! -x "${cli_bin}" ]]; then
+    cargo build --quiet --locked -p nivrit-cli
+  fi
+  HOME="${home_dir}" NIVRIT_PASSWORD="${NIV_PASSWORD:-}" \
+    "${cli_bin}" --server "${API_BASE}" "$@"
 }
 
 # Read a value from a CLI config JSON by key.
 config_value() {
   local home_dir="$1"
   local key="$2"
-  ${COMPOSE} exec -T -e "HOME=${home_dir}" api sh -c 'cat "$HOME/.nivrit/config.json"' \
-    | python3 -c "import json,sys; print(json.load(sys.stdin)['${key}'])"
+  python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['${key}'])" \
+    "${home_dir}/.nivrit/config.json"
 }
 
 # Make an authenticated API call using a user's bearer token.
@@ -89,9 +109,8 @@ for _ in {1..30}; do
 done
 curl -sf "${API_BASE}/health" | grep -q ok || fail "API did not become healthy"
 
-# Start each run with clean CLI home directories so leftover project keys from
-# previous runs cannot interfere with key rotation.
-${COMPOSE} exec -T api rm -rf "${ALICE_HOME}" "${BOB_HOME}"
+# Each run uses unique CLI home directories, so the distroless API image needs
+# no shell utilities (`rm`, `sh`, or `cat`) for test setup and inspection.
 
 # -----------------------------------------------------------------------------
 # Core secret lifecycle

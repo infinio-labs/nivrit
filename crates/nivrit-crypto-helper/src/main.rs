@@ -7,6 +7,8 @@ use nivrit_crypto::{
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 
+mod protocol;
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum Request {
@@ -329,30 +331,18 @@ fn run(req: Request) -> Response {
     }
 }
 
+fn handle_input(input: &str) -> String {
+    protocol::handle(input, run)
+}
+
 fn main() {
     let mut input = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut input) {
-        let resp = err(format!("read stdin: {e}"));
-        println!("{}", serde_json::to_string(&resp).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string(&err(format!("read stdin: {e}"))).unwrap()
+        );
         return;
     }
-
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        let resp = err("empty input");
-        println!("{}", serde_json::to_string(&resp).unwrap());
-        return;
-    }
-
-    let req: Request = match serde_json::from_str(trimmed) {
-        Ok(r) => r,
-        Err(e) => {
-            let resp = err(format!("parse request: {e}"));
-            println!("{}", serde_json::to_string(&resp).unwrap());
-            return;
-        }
-    };
-
-    let resp = run(req);
-    println!("{}", serde_json::to_string(&resp).unwrap());
+    println!("{}", handle_input(&input));
 }

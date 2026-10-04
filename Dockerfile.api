@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # Build stage for the Nivrit API server.
 # -----------------------------------------------------------------------------
-FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS builder
+FROM docker.io/library/rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS builder
 
 WORKDIR /usr/src/nivrit
 
@@ -31,7 +31,7 @@ COPY sdks/rust ./sdks/rust
 # startup, so nothing else needs to ship in the runtime image to do it.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    CARGO_TARGET_DIR=/build/target cargo build --release -p nivrit-api \
+    CARGO_TARGET_DIR=/build/target cargo build --locked --release -p nivrit-api \
     && cp /build/target/release/nivrit-api /usr/local/bin/nivrit-api
 
 # -----------------------------------------------------------------------------

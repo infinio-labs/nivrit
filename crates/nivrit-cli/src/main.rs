@@ -30,6 +30,28 @@ enum OutputFormat {
     Json,
 }
 
+/// Shared command dependencies. Commands receive one context instead of
+/// rebuilding config, transport, and output wiring independently.
+struct CommandContext {
+    client: reqwest::Client,
+    server: String,
+    config: CliConfig,
+    format: OutputFormat,
+}
+
+impl CommandContext {
+    fn from_cli(cli: &Cli) -> Self {
+        let mut config = load_config();
+        config.server_url = cli.server.clone();
+        Self {
+            client: reqwest::Client::new(),
+            server: cli.server.clone(),
+            config,
+            format: cli.format,
+        }
+    }
+}
+
 fn print_output<T: Serialize>(format: OutputFormat, plain: &str, value: &T) {
     match format {
         OutputFormat::Plain => println!("{}", plain),
@@ -455,13 +477,16 @@ struct EncryptedKey {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-    let mut config = load_config();
-    config.server_url = cli.server.clone();
+    execute(Cli::parse()).await
+}
 
-    let client = reqwest::Client::new();
-
-    let format = cli.format;
+async fn execute(cli: Cli) -> anyhow::Result<()> {
+    let CommandContext {
+        client,
+        server,
+        mut config,
+        format,
+    } = CommandContext::from_cli(&cli);
     match cli.command {
         Commands::Register {
             email,
@@ -472,7 +497,7 @@ async fn main() -> anyhow::Result<()> {
             let password = resolve_new_password(password, password_stdin)?;
             register(
                 &client,
-                &cli.server,
+                &server,
                 &mut config,
                 format,
                 &email,
@@ -517,7 +542,7 @@ async fn main() -> anyhow::Result<()> {
                 };
                 login_with_pat(
                     &client,
-                    &cli.server,
+                    &server,
                     &mut config,
                     format,
                     &pat,
@@ -527,7 +552,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 let email = email.ok_or_else(|| anyhow::anyhow!("--email required"))?;
                 let password = resolve_password(password, password_stdin, "Master password: ")?;
-                login(&client, &cli.server, &mut config, format, &email, &password).await?
+                login(&client, &server, &mut config, format, &email, &password).await?
             }
         }
         Commands::Whoami => whoami(&client, &config, format).await?,

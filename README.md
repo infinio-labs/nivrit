@@ -5,16 +5,22 @@
 [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![GitHub release](https://img.shields.io/github/v/release/infinio-labs/nivrit?logo=github)](https://github.com/infinio-labs/nivrit/releases/latest)
 
-A secret manager that never sees your secrets — and won't be caught flat-footed
-when quantum computers get good enough to matter.
+A client-side encrypted, self-hosted secret manager with a documented hybrid
+post-quantum design.
 
 ## Status
 
-MVP in place. The CLI and web UI can register users, create orgs/projects/environments,
-and set/get client-side encrypted secrets end-to-end.
+**Public MVP.** The CLI and web UI can register users, create
+orgs/projects/environments, and set/get client-side encrypted secrets end-to-end.
+This release is pre-audit and is not production security software. Do not store
+high-value production secrets until an independent security review is complete.
+See [`docs/launch-gate.md`](docs/launch-gate.md) for the evidence required to
+promote beyond this preview.
 
-> **Scope for the initial open-source release.** Nivrit leads on **post-quantum,
-> zero-knowledge** secret management. To keep that promise credible and maintainable,
+> **Scope for the initial open-source release.** Nivrit is designed around
+> **client-side encryption** and a documented **hybrid post-quantum** construction.
+> Those properties are not an independent security assurance. To keep the project
+> credible and maintainable,
 > the first public release centers on the **web UI, CLI, API, and the Node.js SDK**.
 > The VS Code extension and the non-Node SDKs (Python, Go, Rust, .NET, Java, Ruby,
 > Elixir) are **experimental / community-contributed** and not yet part of the
@@ -29,7 +35,7 @@ and set/get client-side encrypted secrets end-to-end.
   and sends *that* to log in; the key that actually unwraps your private key is
   derived locally and never crosses the wire. Even a fully compromised, fully logged
   server can't reconstruct it.
-- **Post-quantum from day one, not a "coming soon."** Key exchange is a hybrid
+- **Hybrid PQC design from day one, not a "coming soon."** Key exchange is a hybrid
   **X25519 + ML-KEM-768** — so even if ML-KEM alone gets broken, the classical X25519
   leg still holds the line. Audit logs are signed with **ML-DSA-65**, so the trail
   itself is quantum-resistant too. One honest caveat: the underlying `ml-kem`/`ml-dsa`
@@ -40,8 +46,8 @@ and set/get client-side encrypted secrets end-to-end.
 - **AGPL-3.0, self-hosted.** `docker compose up` and you're running the whole stack —
   no hosted-only features, no closed fork drifting away from what you can read.
 
-Small project, sharp focus: get zero-knowledge and post-quantum right, rather than
-being everything to everyone.
+Small project, sharp focus: make the client-side encryption design inspectable and
+maintainable, rather than being everything to everyone.
 
 ## Quick start
 
@@ -84,25 +90,30 @@ docker compose up -d
 ```
 
 For a production-oriented sample, see [`deploy/docker-compose.yml`](deploy/docker-compose.yml).
+The step-by-step operating path is in [`docs/operator-runbook.md`](docs/operator-runbook.md).
 
 ## Releases & container images
 
-Releases are cut automatically from [Conventional Commits](https://www.conventionalcommits.org/)
+Releases are intended to be cut automatically from [Conventional Commits](https://www.conventionalcommits.org/)
 on `main`. Once CI is green, **semantic-release**
 ([`.releaserc.yml`](.releaserc.yml)) bumps the version in every manifest,
 commits it, and tags the commit `vX.Y.Z`; the tag then triggers the
 [release pipeline](.github/workflows/release.yml), which builds the CLI and
-crypto-helper binaries for 6 platforms, attaches them to a GitHub Release,
+crypto-helper binaries for 5 platforms, attaches them to a GitHub Release,
 publishes the SDKs, and pushes container images to GHCR:
+
+The semantic-release workflow requires a dedicated `RELEASE_TOKEN` secret with
+only the permissions needed to update the protected release branch and create
+tags. It intentionally fails closed when that credential is absent.
 
 - `ghcr.io/infinio-labs/nivrit-api` — the API server
 - `ghcr.io/infinio-labs/nivrit-web` — the web dashboard (Caddy static server)
 
-Pull and run them like any other image:
+Pull and run them like any other image once the GHCR packages are public:
 
 ```bash
-docker pull ghcr.io/infinio-labs/nivrit-api:v1.0.0
-docker pull ghcr.io/infinio-labs/nivrit-web:v1.0.0
+docker pull ghcr.io/infinio-labs/nivrit-api:2.1.0
+docker pull ghcr.io/infinio-labs/nivrit-web:2.1.0
 # or just:
 docker pull ghcr.io/infinio-labs/nivrit-api:latest
 ```
@@ -111,6 +122,18 @@ The API image embeds the database migrations and refuses to start without
 `NIVRIT_AUTH_SECRET`, `NIVRIT_TOTP_ENCRYPTION_KEY`, and an audit-signing
 decision — see [`.env.example`](.env.example) and
 [`docker-compose.yml`](docker-compose.yml) for the full wiring.
+
+If the GHCR packages are not public yet, deploy directly from this checkout:
+
+```bash
+cp .env.example .env  # replace every placeholder with generated values
+# Set NIVRIT_SIGNING_KEY_SEED to `openssl rand -base64 32` output in .env.
+docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+```
+
+The production sample binds host ports to loopback. Put a TLS reverse proxy in
+front of the web listener before exposing it outside the host; do not publish
+the API port directly to the internet.
 
 > **Making the images public.** GHCR packages default to **private**, even in
 > a public repo. After the first release, flip each package to public once
@@ -124,10 +147,17 @@ once the per-registry credentials exist (see
 [`.github/workflows/release.yml`](.github/workflows/release.yml)). Until then
 those jobs are skipped and the release run stays green.
 
+Every release includes `SHA256SUMS`, a CycloneDX SBOM, and GitHub artifact
+provenance for its published binaries. Verify a downloaded binary with:
+
+```bash
+sha256sum --check SHA256SUMS
+gh attestation verify niv-linux-x86_64 --repo infinio-labs/nivrit
+```
+
 Versioning rules: `feat:` commits bump the minor, `fix:`/`perf:` bump the
 patch, `BREAKING CHANGE`/`!` bumps the major; `chore:`/`docs:`/`ci:` commits
-do **not** produce a release. The first release of this repo will be
-`v1.0.0`.
+do **not** produce a release.
 
 ## Project layout
 
@@ -167,7 +197,8 @@ documentation and a few gaps this process surfaced.
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bug reports and feature requests are
-welcome via GitHub Issues; security issues should be reported privately per
+welcome via GitHub Issues. Deployment and usage help is routed through
+[`SUPPORT.md`](SUPPORT.md); security issues should be reported privately per
 [`SECURITY.md`](SECURITY.md).
 
 ## Changelog

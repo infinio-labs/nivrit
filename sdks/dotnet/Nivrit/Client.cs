@@ -13,7 +13,7 @@ public class NivritClient
     public NivritClient(string baseUrl, string token)
     {
         _baseUrl = baseUrl.TrimEnd('/');
-        _http = new HttpClient();
+        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
 
