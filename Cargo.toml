@@ -50,7 +50,7 @@ chrono = { version = "=0.4.45", features = ["serde"] }
 
 # Errors
 anyhow = "=1.0.104"
-thiserror = "=2.0.18"
+thiserror = "=2.0.20"
 
 # Logging
 tracing = "=0.1.44"
