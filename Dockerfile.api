@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # Build stage for the Nivrit API server.
 # -----------------------------------------------------------------------------
-FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS builder
+FROM rust:1.99.1-bookworm@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8 AS builder
 
 WORKDIR /usr/src/nivrit
 
